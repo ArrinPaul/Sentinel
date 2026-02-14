@@ -1,6 +1,7 @@
 'use client'
 
 import { VerificationFeedback } from '@/types'
+import { motion } from 'framer-motion'
 
 interface FeedbackDisplayProps {
   feedback: VerificationFeedback[]
@@ -17,16 +18,16 @@ export default function FeedbackDisplay({
     switch (type) {
       case 'challenge_completed':
       case 'verification_success':
-        return 'bg-green-50 border-green-200 text-green-800'
+        return 'bg-neon-green/[0.06] border-neon-green/20 text-neon-green'
       case 'challenge_failed':
       case 'verification_failed':
-        return 'bg-red-50 border-red-200 text-red-800'
+        return 'bg-neon-red/[0.06] border-neon-red/20 text-neon-red'
       case 'error':
-        return 'bg-red-50 border-red-300 text-red-900'
+        return 'bg-neon-red/[0.08] border-neon-red/30 text-neon-red'
       case 'score_update':
-        return 'bg-blue-50 border-blue-200 text-blue-800'
+        return 'bg-neon-cyan/[0.06] border-neon-cyan/20 text-neon-cyan'
       default:
-        return 'bg-gray-50 border-gray-200 text-gray-800'
+        return 'bg-white/[0.03] border-white/[0.06] text-ink-300'
     }
   }
 
@@ -34,39 +35,41 @@ export default function FeedbackDisplay({
     switch (type) {
       case 'challenge_completed':
       case 'verification_success':
-        return '✅'
+        return '✓'
       case 'challenge_failed':
       case 'verification_failed':
-        return '❌'
+        return '✗'
       case 'error':
-        return '⚠️'
+        return '!'
       case 'score_update':
-        return '📊'
+        return '◆'
       case 'challenge_issued':
-        return '🎯'
+        return '▶'
       default:
-        return 'ℹ️'
+        return '·'
     }
   }
 
   return (
     <div className="space-y-4">
       {/* Score Display */}
-      <div className="bg-white rounded-lg shadow p-6 border-2 border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-gray-600">Current Score</span>
-          <span className="text-sm text-gray-500">Threshold: 0.70</span>
+      <div className="bg-void-200/80 border border-white/[0.06] p-5" style={{ borderRadius: '2px' }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-ink-400">Current Score</span>
+          <span className="text-[10px] font-mono tracking-[0.15em] text-ink-500">Threshold: 0.70</span>
         </div>
-        <div className="relative w-full h-4 bg-gray-200 rounded-full overflow-hidden">
-          <div 
+        <div className="relative w-full h-px bg-white/[0.06] overflow-hidden mb-3">
+          <motion.div 
             className={`absolute left-0 top-0 h-full transition-all duration-500 ${
-              currentScore >= 0.7 ? 'bg-green-500' : 'bg-blue-500'
+              currentScore >= 0.7 ? 'bg-neon-green shadow-[0_0_8px_rgba(0,255,136,0.4)]' : 'bg-neon-cyan shadow-[0_0_8px_rgba(0,240,255,0.3)]'
             }`}
             style={{ width: `${currentScore * 100}%` }}
           />
         </div>
-        <div className="text-right mt-1">
-          <span className="text-2xl font-bold text-gray-900">
+        <div className="text-right">
+          <span className={`font-mono text-2xl font-bold ${
+            currentScore >= 0.7 ? 'text-neon-green' : 'text-ink-200'
+          }`}>
             {(currentScore * 100).toFixed(0)}%
           </span>
         </div>
@@ -74,29 +77,35 @@ export default function FeedbackDisplay({
 
       {/* Latest Feedback */}
       {latestFeedback && (
-        <div className={`rounded-lg p-4 border-2 ${getFeedbackColor(latestFeedback.type)}`}>
+        <motion.div
+          className={`border p-4 ${getFeedbackColor(latestFeedback.type)}`}
+          style={{ borderRadius: '2px' }}
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          key={feedback.length}
+        >
           <div className="flex items-start gap-3">
-            <span className="text-2xl">{getFeedbackIcon(latestFeedback.type)}</span>
+            <span className="font-mono text-sm font-bold mt-0.5">{getFeedbackIcon(latestFeedback.type)}</span>
             <div className="flex-1">
-              <p className="font-medium">{latestFeedback.message}</p>
+              <p className="font-mono text-sm">{latestFeedback.message}</p>
               {latestFeedback.data?.score !== undefined && (
-                <p className="text-sm mt-1">
+                <p className="text-xs font-mono mt-1 opacity-70">
                   Score: {(latestFeedback.data.score * 100).toFixed(0)}%
                 </p>
               )}
             </div>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Feedback History */}
-      <div className="bg-white rounded-lg shadow p-4 max-h-48 overflow-y-auto">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Activity Log</h3>
-        <div className="space-y-2">
+      <div className="bg-void-200/60 border border-white/[0.06] p-4 max-h-48 overflow-y-auto" style={{ borderRadius: '2px' }}>
+        <h3 className="text-[10px] font-mono tracking-[0.2em] uppercase text-ink-500 mb-3">Activity Log</h3>
+        <div className="space-y-1.5">
           {feedback.slice().reverse().map((item, index) => (
-            <div key={index} className="flex items-start gap-2 text-sm">
-              <span>{getFeedbackIcon(item.type)}</span>
-              <span className="text-gray-600">{item.message}</span>
+            <div key={index} className="flex items-start gap-2 text-xs font-mono">
+              <span className="text-ink-500 mt-px">{getFeedbackIcon(item.type)}</span>
+              <span className="text-ink-400">{item.message}</span>
             </div>
           ))}
         </div>
