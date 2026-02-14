@@ -164,7 +164,7 @@ function VerificationContent() {
 
   const handleRestart = () => {
     if (wsClient) {
-      wsClient.close()
+      wsClient.disconnect()
     }
     reset()
     setError(null)
@@ -191,7 +191,7 @@ function VerificationContent() {
   useEffect(() => {
     return () => {
       if (wsClient) {
-        wsClient.close()
+        wsClient.disconnect()
       }
     }
   }, [wsClient])
