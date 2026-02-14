@@ -39,7 +39,8 @@ class CVVerifier:
         
         Validates Requirement 3.1
         """
-        self.model_path = model_path
+        # Treat empty string as None so fallback logic works
+        self.model_path = model_path if model_path else None
         self._face_landmarker = None
         
         # Store previous frame landmarks for motion detection
@@ -655,12 +656,12 @@ class CVVerifier:
             
             logger.info(f"  nod: movement={movement:.5f}, peak_dir={peak_dir:.5f}, nose_y=[{min(nose_y):.4f}..{max(nose_y):.4f}]")
             
-            if movement > 0.02 and peak_dir > 0.008:
-                confidence = min(movement / 0.06, 1.0)
+            if movement > 0.012 and peak_dir > 0.005:
+                confidence = min(movement / 0.04, 1.0)
                 logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, max(confidence, 0.6)
             logger.info(f"  -> FAIL")
-            return False, movement / 0.06
+            return False, movement / 0.04
         
         # ===== TURN LEFT / TURN RIGHT =====
         elif gesture in ["turn_left", "turn_right"]:
@@ -686,12 +687,12 @@ class CVVerifier:
             
             logger.info(f"  turn: movement={movement:.5f}, peak_dir={peak_dir:.5f}, nose_x=[{min(nose_x):.4f}..{max(nose_x):.4f}]")
             
-            if movement > 0.025 and peak_dir > 0.01:
-                confidence = min(movement / 0.07, 1.0)
+            if movement > 0.015 and peak_dir > 0.006:
+                confidence = min(movement / 0.05, 1.0)
                 logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, max(confidence, 0.6)
             logger.info(f"  -> FAIL")
-            return False, movement / 0.07
+            return False, movement / 0.05
         
         # ===== TILT LEFT / TILT RIGHT =====
         elif gesture in ["tilt_left", "tilt_right"]:
@@ -720,12 +721,12 @@ class CVVerifier:
             
             logger.info(f"  tilt: range={angle_range:.5f} rad, peak_dir={peak_dir:.5f}")
             
-            if angle_range > 0.04 and peak_dir > 0.015:
-                confidence = min(angle_range / 0.12, 1.0)
+            if angle_range > 0.025 and peak_dir > 0.01:
+                confidence = min(angle_range / 0.08, 1.0)
                 logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, max(confidence, 0.6)
             logger.info(f"  -> FAIL")
-            return False, angle_range / 0.12
+            return False, angle_range / 0.08
         
         # ===== OPEN MOUTH (use jawOpen blendshape) =====
         elif gesture == "open_mouth":
@@ -733,8 +734,8 @@ class CVVerifier:
             if jaw_opens:
                 max_jaw = max(jaw_opens)
                 logger.info(f"  open_mouth: max_jawOpen={max_jaw:.4f} (blendshape)")
-                if max_jaw > 0.35:
-                    confidence = min(max_jaw / 0.7, 1.0)
+                if max_jaw > 0.20:
+                    confidence = min(max_jaw / 0.5, 1.0)
                     logger.info(f"  -> PASS confidence={confidence:.3f}")
                     return True, max(confidence, 0.6)
             
@@ -742,8 +743,8 @@ class CVVerifier:
             mouth_openings = [abs(lm[14][1] - lm[13][1]) for lm in all_landmarks]
             max_opening = max(mouth_openings)
             logger.info(f"  open_mouth fallback: max_opening={max_opening:.5f}")
-            if max_opening > 0.015:
-                confidence = min(max_opening / 0.02, 1.0)
+            if max_opening > 0.010:
+                confidence = min(max_opening / 0.015, 1.0)
                 logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, max(confidence, 0.6)
             logger.info(f"  -> FAIL")
@@ -760,8 +761,8 @@ class CVVerifier:
             if blink_scores:
                 max_blink = max(blink_scores)
                 logger.info(f"  close_eyes: max_blink={max_blink:.4f} (blendshape)")
-                if max_blink > 0.5:
-                    confidence = min(max_blink / 0.7, 1.0)
+                if max_blink > 0.35:
+                    confidence = min(max_blink / 0.5, 1.0)
                     logger.info(f"  -> PASS confidence={confidence:.3f}")
                     return True, max(confidence, 0.6)
             
@@ -791,8 +792,8 @@ class CVVerifier:
                 max_brow = max(brow_scores)
                 brow_range = max(brow_scores) - min(brow_scores)
                 logger.info(f"  raise_eyebrows: max_browInnerUp={max_brow:.4f}, range={brow_range:.4f}")
-                if max_brow > 0.30 or brow_range > 0.15:
-                    confidence = min(max_brow / 0.4, 1.0)
+                if max_brow > 0.20 or brow_range > 0.10:
+                    confidence = min(max_brow / 0.3, 1.0)
                     logger.info(f"  -> PASS confidence={confidence:.3f}")
                     return True, max(confidence, 0.6)
             
@@ -800,8 +801,8 @@ class CVVerifier:
             brow_y = [(lm[70][1] + lm[300][1]) / 2.0 for lm in all_landmarks]
             movement = max(brow_y) - min(brow_y)
             logger.info(f"  raise_eyebrows fallback: range={movement:.5f}")
-            if movement > 0.003:
-                confidence = min(movement / 0.012, 1.0)
+            if movement > 0.002:
+                confidence = min(movement / 0.008, 1.0)
                 logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, max(confidence, 0.6)
             logger.info(f"  -> FAIL")
@@ -820,8 +821,8 @@ class CVVerifier:
                 max_blink = max(blink_scores)
                 logger.info(f"  blink: max={max_blink:.4f}, range={blink_range:.4f} (blendshape)")
                 # Blink = significant variation in blink score (eyes close then open)
-                if blink_range > 0.25 or max_blink > 0.5:
-                    confidence = min(max(blink_range, max_blink) / 0.6, 1.0)
+                if blink_range > 0.15 or max_blink > 0.35:
+                    confidence = min(max(blink_range, max_blink) / 0.5, 1.0)
                     logger.info(f"  -> PASS confidence={confidence:.3f}")
                     return True, max(confidence, 0.6)
             
@@ -836,8 +837,8 @@ class CVVerifier:
                 ear_values.append(ear)
             ear_range = max(ear_values) - min(ear_values)
             logger.info(f"  blink fallback: EAR range={ear_range:.5f}")
-            if ear_range > 0.015:
-                confidence = min(ear_range / 0.08, 1.0)
+            if ear_range > 0.010:
+                confidence = min(ear_range / 0.05, 1.0)
                 logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, max(confidence, 0.6)
             logger.info(f"  -> FAIL")
@@ -895,8 +896,8 @@ class CVVerifier:
                     combined = smile_score + cheek_score * 0.3
                     if fi == 0:
                         logger.info(f"  smile: mouthSmile={smile_score:.4f}, cheekSquint={cheek_score:.4f}")
-                    if combined > 0.15:
-                        confidence = min(combined / 0.5, 1.0)
+                    if combined > 0.08:
+                        confidence = min(combined / 0.35, 1.0)
                         passed = True
                 
                 # Fallback: mouth width ratio
@@ -904,10 +905,10 @@ class CVVerifier:
                     face_w = abs(landmarks[263][0] - landmarks[33][0]) + 1e-6
                     mouth_w = abs(landmarks[291][0] - landmarks[61][0])
                     ratio = mouth_w / face_w
-                    if fi == 0 and not bs:
+                    if fi == 0:
                         logger.info(f"  smile fallback: width_ratio={ratio:.4f}")
-                    if ratio > 0.42:
-                        confidence = max(confidence, min(ratio / 0.5, 1.0))
+                    if ratio > 0.38:
+                        confidence = max(confidence, min(ratio / 0.45, 1.0))
                         passed = True
             
             elif expression == "frown":
@@ -918,8 +919,8 @@ class CVVerifier:
                     combined = frown_score + brow_down * 0.5
                     if fi == 0:
                         logger.info(f"  frown: mouthFrown={frown_score:.4f}, browDown={brow_down:.4f}")
-                    if combined > 0.12:
-                        confidence = min(combined / 0.35, 1.0)
+                    if combined > 0.08:
+                        confidence = min(combined / 0.25, 1.0)
                         passed = True
                 
                 if not passed:
@@ -939,8 +940,8 @@ class CVVerifier:
                     combined = eye_wide + jaw_open * 0.5
                     if fi == 0:
                         logger.info(f"  surprised: eyeWide={eye_wide:.4f}, jawOpen={jaw_open:.4f}")
-                    if combined > 0.15:
-                        confidence = min(combined / 0.45, 1.0)
+                    if combined > 0.10:
+                        confidence = min(combined / 0.35, 1.0)
                         passed = True
                 
                 if not passed:
@@ -982,8 +983,8 @@ class CVVerifier:
                     combined = brow_down + nose_sneer * 0.5 + mouth_press * 0.3
                     if fi == 0:
                         logger.info(f"  angry: browDown={brow_down:.4f}, noseSneer={nose_sneer:.4f}, mouthPress={mouth_press:.4f}")
-                    if combined > 0.12:
-                        confidence = min(combined / 0.35, 1.0)
+                    if combined > 0.08:
+                        confidence = min(combined / 0.25, 1.0)
                         passed = True
                 
                 if not passed:

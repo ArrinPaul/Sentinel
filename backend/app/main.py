@@ -72,12 +72,17 @@ session_manager = SessionManager(database_service)
 challenge_engine = ChallengeEngine()
 
 # Initialize CV Verifier with model path
-model_path = os.getenv("MEDIAPIPE_MODEL_PATH", None)
+model_path = os.getenv("MEDIAPIPE_MODEL_PATH", "").strip() or None
 if model_path is None:
     # Try default location
     default_path = os.path.join(os.path.expanduser("~"), ".mediapipe_models", "face_landmarker.task")
     if os.path.exists(default_path):
         model_path = default_path
+        logger.info(f"Using MediaPipe model at default path: {model_path}")
+if model_path:
+    logger.info(f"MediaPipe model path resolved to: {model_path} (exists={os.path.exists(model_path)})")
+else:
+    logger.warning("No MediaPipe model path found! Face detection will not work.")
 cv_verifier = CVVerifier(model_path=model_path)
 
 # Initialize Scoring Engine
@@ -92,7 +97,7 @@ token_issuer = TokenIssuer(private_key=private_key, public_key=public_key)
 emotion_analyzer = EmotionAnalyzer()
 
 # Initialize Deepfake Detector
-deepfake_model_path = os.getenv("DEEPFAKE_MODEL_PATH", None)
+deepfake_model_path = os.getenv("DEEPFAKE_MODEL_PATH", "").strip() or None
 deepfake_detector = DeepfakeDetector(model_path=deepfake_model_path)
 
 # Initialize Blockchain Verification Ledger (Decentralized audit trail)
