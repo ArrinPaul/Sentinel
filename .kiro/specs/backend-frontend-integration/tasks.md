@@ -6,7 +6,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
 
 ## Tasks
 
-- [ ] 1. Create API Client Module
+- [x] 1. Create API Client Module
   - [x] 1.1 Implement API client in frontend/src/lib/api.ts
     - Create APIClient class with createSession and validateToken methods
     - Use fetch API with proper error handling
@@ -23,7 +23,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - Test JSON parsing errors
     - _Requirements: 12.4_
 
-- [ ] 2. Implement Camera Capture Module
+- [x] 2. Implement Camera Capture Module
   - [x] 2.1 Create camera capture module in frontend/src/lib/camera.ts
     - Implement CameraCapture class with start, stop, captureFrame methods
     - Use navigator.mediaDevices.getUserMedia for camera access
@@ -47,7 +47,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - Test cleanup on stop
     - _Requirements: 9.1_
 
-- [ ] 3. Implement WebSocket Client
+- [x] 3. Implement WebSocket Client
   - [x] 3.1 Create WebSocket client module in frontend/src/lib/websocket.ts
     - Implement WebSocketClient class with connect, sendFrame, disconnect methods
     - Construct URL from process.env.NEXT_PUBLIC_WS_URL and session_id
@@ -69,7 +69,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 22: Reconnection attempt limit**
     - **Validates: Requirements 9.2, 9.3**
 
-- [ ] 4. Update FaceIDScanner Component
+- [x] 4. Update FaceIDScanner Component
   - [x] 4.1 Add scores prop to FaceIDScanner component
     - Add scores prop with liveness, emotion, deepfake fields
     - Display scores as percentage values with progress bars
@@ -88,7 +88,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
 - [x] 5. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 6. Integrate Components in Verification Page
+- [x] 6. Integrate Components in Verification Page
   - [x] 6.1 Update verify-glass page to use real API client
     - Import and use APIClient to create session
     - Store session_id in component state
@@ -112,7 +112,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 10: Frame message structure**
     - **Validates: Requirements 3.4, 13.2**
 
-- [ ] 7. Implement Challenge Flow
+- [x] 7. Implement Challenge Flow
   - [x] 7.1 Handle CHALLENGE_ISSUED messages
     - Update currentChallenge state with instruction
     - Display challenge in UI via FaceIDScanner
@@ -137,7 +137,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 29: Challenge completion counter**
     - **Validates: Requirements 14.1**
 
-- [ ] 8. Implement Score Updates
+- [x] 8. Implement Score Updates
   - [x] 8.1 Handle SCORE_UPDATE messages
     - Extract liveness_score, emotion_score, deepfake_score from message
     - Update scores state
@@ -148,7 +148,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 15: Score update message structure**
     - **Validates: Requirements 5.5, 6.1, 6.2, 6.3**
 
-- [ ] 9. Implement Verification Completion
+- [x] 9. Implement Verification Completion
   - [x] 9.1 Handle VERIFICATION_SUCCESS messages
     - Extract JWT token from message
     - Store token in Convex database
@@ -170,7 +170,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 20: UI state transitions**
     - **Validates: Requirements 7.5, 7.6**
 
-- [ ] 10. Implement Resource Cleanup
+- [x] 10. Implement Resource Cleanup
   - [x] 10.1 Add cleanup logic to verify-glass page
     - Close WebSocket connection on component unmount
     - Stop camera capture when WebSocket closes
@@ -185,7 +185,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 32: Camera resource cleanup**
     - **Validates: Requirements 15.2**
 
-- [ ] 11. Update Backend CORS Configuration
+- [x] 11. Update Backend CORS Configuration
   - [x] 11.1 Verify CORS configuration in backend/app/main.py
     - Ensure CORS_ORIGINS includes http://localhost:3000
     - Verify allow_credentials is True
@@ -201,10 +201,10 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 24: CORS origin validation**
     - **Validates: Requirements 10.1, 10.5**
 
-- [-] 12. Checkpoint - Ensure all tests pass
+- [x] 12. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 13. Integration Testing
+- [x] 13. Integration Testing
   - [x] 13.1 Write integration test for complete verification flow
     - Test session creation → WebSocket connection → frame transmission → challenge completion → token issuance
     - Mock camera and WebSocket for controlled testing
@@ -224,7 +224,7 @@ This implementation plan connects the FastAPI backend with the Next.js frontend 
     - **Property 28: Backend message type enumeration**
     - **Validates: Requirements 13.5**
 
-- [ ] 14. Final Checkpoint - End-to-End Verification
+- [x] 14. Final Checkpoint - End-to-End Verification
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
