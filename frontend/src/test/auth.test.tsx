@@ -9,8 +9,8 @@ describe('Authentication Flow', () => {
     expect('/sign-up').toBeTruthy()
   })
 
-  it('should redirect to verify after authentication', () => {
-    const redirectUrl = '/verify'
-    expect(redirectUrl).toBe('/verify')
+  it('should redirect to verify-glass after authentication', () => {
+    const redirectUrl = '/verify-glass'
+    expect(redirectUrl).toBe('/verify-glass')
   })
 })

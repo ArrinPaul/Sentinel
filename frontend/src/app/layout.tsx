@@ -5,6 +5,11 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'SENTINEL — Proof of Life',
   description: 'Neural biometric authentication with ML-powered liveness detection',
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+    ],
+  },
 }
 
 export default function RootLayout({
@@ -14,6 +19,10 @@ export default function RootLayout({
 }) {
   return (
     <ClerkProvider
+      afterSignInUrl="/verify-glass"
+      afterSignUpUrl="/verify-glass"
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
       appearance={{
         variables: {
           colorPrimary: '#00f0ff',

@@ -18,7 +18,8 @@ export default function SignUpPage() {
               card: "bg-void-100 border border-white/10 shadow-glow-cyan rounded-lg"
             }
           }}
-          redirectUrl="/verify"
+          redirectUrl="/verify-glass"
+          signUpFallbackRedirectUrl="/verify-glass"
         />
       </div>
     </div>

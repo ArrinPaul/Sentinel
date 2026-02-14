@@ -6,7 +6,7 @@ export default async function Home() {
   const { userId } = auth()
   
   if (userId) {
-    redirect('/verify')
+    redirect('/verify-glass')
   }
 
   return (
