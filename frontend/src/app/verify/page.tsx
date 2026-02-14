@@ -176,6 +176,11 @@ function VerificationContent() {
     }
   }, [wsClient, sessionState.status])
 
+  // Dynamically adjust FPS based on challenge status:
+  // - During "preparing" phase: 5 FPS (saves bandwidth, frames are discarded anyway)
+  // - During "recording" phase: 30 FPS (full capture for ML pipeline)
+  const currentFps = challengeStatus === 'recording' ? 30 : 5
+
   const handleRestart = () => {
     if (wsClient) {
       wsClient.disconnect()
@@ -367,7 +372,7 @@ function VerificationContent() {
               <h2 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Camera Feed</h2>
               <CameraCapture 
                 onFrame={handleFrame}
-                fps={30}
+                fps={currentFps}
                 isActive={sessionState.status === 'active'}
               />
             </div>

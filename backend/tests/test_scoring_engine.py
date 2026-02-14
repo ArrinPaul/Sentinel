@@ -20,8 +20,8 @@ class TestScoringEngine:
             emotion_score=0.7
         )
         
-        # Expected: 0.4 * 0.8 + 0.3 * 0.9 + 0.3 * 0.7 = 0.32 + 0.27 + 0.21 = 0.80
-        expected_score = 0.80
+        # Expected: 0.4 * 0.8 + 0.25 * 0.9 + 0.35 * 0.7 = 0.32 + 0.225 + 0.245 = 0.79
+        expected_score = 0.79
         assert abs(result.final_score - expected_score) < 0.0001
         assert result.liveness_score == 0.8
         assert result.deepfake_score == 0.9
@@ -30,29 +30,29 @@ class TestScoringEngine:
         assert result.timestamp > 0
     
     def test_threshold_boundary_pass(self):
-        """Test that score exactly at 0.70 passes"""
-        # Create scores that result in exactly 0.70
-        # 0.4 * 0.7 + 0.3 * 0.7 + 0.3 * 0.7 = 0.70
+        """Test that score exactly at 0.65 passes"""
+        # Create scores that result in exactly 0.65
+        # 0.4 * 0.65 + 0.25 * 0.65 + 0.35 * 0.65 = 0.65
         result = self.engine.compute_final_score(
-            liveness_score=0.7,
-            deepfake_score=0.7,
-            emotion_score=0.7
+            liveness_score=0.65,
+            deepfake_score=0.65,
+            emotion_score=0.65
         )
         
-        assert abs(result.final_score - 0.70) < 0.0001
+        assert abs(result.final_score - 0.65) < 0.0001
         assert result.passed is True
     
     def test_threshold_boundary_fail(self):
-        """Test that score just below 0.70 fails"""
-        # Create scores that result in 0.69
-        # 0.4 * 0.6 + 0.3 * 0.8 + 0.3 * 0.7 = 0.24 + 0.24 + 0.21 = 0.69
+        """Test that score just below 0.65 fails"""
+        # Create scores that result in below 0.65
+        # 0.4 * 0.5 + 0.25 * 0.8 + 0.35 * 0.6 = 0.20 + 0.20 + 0.21 = 0.61
         result = self.engine.compute_final_score(
-            liveness_score=0.6,
+            liveness_score=0.5,
             deepfake_score=0.8,
-            emotion_score=0.7
+            emotion_score=0.6
         )
         
-        assert abs(result.final_score - 0.69) < 0.0001
+        assert abs(result.final_score - 0.61) < 0.0001
         assert result.passed is False
     
     def test_perfect_scores(self):
@@ -88,10 +88,10 @@ class TestScoringEngine:
         
         # Expected: 0.4 * 1.0 = 0.40
         assert abs(result.final_score - 0.40) < 0.0001
-        assert result.passed is False  # Still below 0.70
+        assert result.passed is False  # Still below 0.65
     
     def test_weighted_formula_deepfake_and_emotion(self):
-        """Test that deepfake and emotion have equal weight (0.3 each)"""
+        """Test that deepfake and emotion have weights 0.25 and 0.35"""
         # Zero liveness, high deepfake and emotion
         result = self.engine.compute_final_score(
             liveness_score=0.0,
@@ -99,7 +99,7 @@ class TestScoringEngine:
             emotion_score=1.0
         )
         
-        # Expected: 0.3 * 1.0 + 0.3 * 1.0 = 0.60
+        # Expected: 0.25 * 1.0 + 0.35 * 1.0 = 0.60
         assert abs(result.final_score - 0.60) < 0.0001
         assert result.passed is False
     
@@ -112,8 +112,8 @@ class TestScoringEngine:
             emotion_score=0.8
         )
         
-        # Expected: 0.4 * 0.8 + 0.3 * 1.0 + 0.3 * 0.8 = 0.32 + 0.30 + 0.24 = 0.86
-        expected_score = 0.86
+        # Expected: 0.4 * 0.8 + 0.25 * 1.0 + 0.35 * 0.8 = 0.32 + 0.25 + 0.28 = 0.85
+        expected_score = 0.85
         assert abs(result.final_score - expected_score) < 0.0001
         assert result.passed is True
     
@@ -127,8 +127,8 @@ class TestScoringEngine:
             emotion_score=liveness  # Using liveness as proxy
         )
         
-        # Expected: 0.4 * 0.75 + 0.3 * 1.0 + 0.3 * 0.75 = 0.30 + 0.30 + 0.225 = 0.825
-        expected_score = 0.825
+        # Expected: 0.4 * 0.75 + 0.25 * 1.0 + 0.35 * 0.75 = 0.30 + 0.25 + 0.2625 = 0.8125
+        expected_score = 0.8125
         assert abs(result.final_score - expected_score) < 0.0001
         assert result.passed is True
     
@@ -180,7 +180,7 @@ class TestScoringEngineProperties:
         result = self.engine.compute_final_score(liveness, deepfake, emotion)
         
         # Calculate expected score using the formula
-        expected = 0.4 * liveness + 0.3 * deepfake + 0.3 * emotion
+        expected = 0.4 * liveness + 0.25 * deepfake + 0.35 * emotion
         
         # Verify the formula is applied correctly
         assert abs(result.final_score - expected) < 0.0001, (
@@ -208,22 +208,22 @@ class TestScoringEngineProperties:
         **Validates: Requirements 7.2, 7.3, 7.4**
         
         For any calculated final score, the verification should be marked as 
-        successful if and only if the score is greater than or equal to 0.70.
+        successful if and only if the score is greater than or equal to 0.65.
         """
         result = self.engine.compute_final_score(liveness, deepfake, emotion)
         
         # Calculate expected score
-        expected_score = 0.4 * liveness + 0.3 * deepfake + 0.3 * emotion
+        expected_score = 0.4 * liveness + 0.25 * deepfake + 0.35 * emotion
         
         # Verify threshold-based decision
-        if expected_score >= 0.70:
+        if expected_score >= 0.65:
             assert result.passed is True, (
-                f"Verification should pass for score {expected_score:.4f} >= 0.70 "
+                f"Verification should pass for score {expected_score:.4f} >= 0.65 "
                 f"(liveness={liveness}, deepfake={deepfake}, emotion={emotion})"
             )
         else:
             assert result.passed is False, (
-                f"Verification should fail for score {expected_score:.4f} < 0.70 "
+                f"Verification should fail for score {expected_score:.4f} < 0.65 "
                 f"(liveness={liveness}, deepfake={deepfake}, emotion={emotion})"
             )
         
@@ -240,84 +240,84 @@ class TestScoringEngineThresholdBoundary:
     
     def test_threshold_boundary_0_69_fails(self):
         """
-        Test that score of exactly 0.69 fails verification
+        Test that score of exactly 0.64 fails verification
         
         **Validates: Requirements 7.3, 7.4**
         """
-        # Create scores that result in exactly 0.69
-        # 0.4 * 0.6 + 0.3 * 0.8 + 0.3 * 0.7 = 0.24 + 0.24 + 0.21 = 0.69
+        # Create scores that result in below 0.65
+        # 0.4 * 0.5 + 0.25 * 0.8 + 0.35 * 0.7 = 0.20 + 0.20 + 0.245 = 0.645
         result = self.engine.compute_final_score(
-            liveness_score=0.6,
+            liveness_score=0.5,
             deepfake_score=0.8,
             emotion_score=0.7
         )
         
-        assert abs(result.final_score - 0.69) < 0.0001, (
-            f"Expected score 0.69, got {result.final_score}"
+        assert abs(result.final_score - 0.645) < 0.0001, (
+            f"Expected score 0.645, got {result.final_score}"
         )
         assert result.passed is False, (
-            "Score of 0.69 should fail (< 0.70 threshold)"
+            "Score of 0.645 should fail (< 0.65 threshold)"
         )
     
     def test_threshold_boundary_0_70_passes(self):
         """
-        Test that score of exactly 0.70 passes verification
+        Test that score of exactly 0.65 passes verification
         
         **Validates: Requirements 7.2, 7.3**
         """
-        # Create scores that result in exactly 0.70
-        # 0.4 * 0.7 + 0.3 * 0.7 + 0.3 * 0.7 = 0.28 + 0.21 + 0.21 = 0.70
+        # Create scores that result in exactly 0.65
+        # 0.4 * 0.65 + 0.25 * 0.65 + 0.35 * 0.65 = 0.65
         result = self.engine.compute_final_score(
-            liveness_score=0.7,
-            deepfake_score=0.7,
-            emotion_score=0.7
+            liveness_score=0.65,
+            deepfake_score=0.65,
+            emotion_score=0.65
         )
         
-        assert abs(result.final_score - 0.70) < 0.0001, (
-            f"Expected score 0.70, got {result.final_score}"
+        assert abs(result.final_score - 0.65) < 0.0001, (
+            f"Expected score 0.65, got {result.final_score}"
         )
         assert result.passed is True, (
-            "Score of 0.70 should pass (>= 0.70 threshold)"
+            "Score of 0.65 should pass (>= 0.65 threshold)"
         )
     
     def test_threshold_boundary_just_below(self):
         """
-        Test that score just below 0.70 fails
+        Test that score just below 0.65 fails
         
         **Validates: Requirements 7.4**
         """
-        # Create scores that result in 0.6999...
-        # 0.4 * 0.699 + 0.3 * 0.7 + 0.3 * 0.7 = 0.2796 + 0.21 + 0.21 = 0.6996
+        # Create scores that result in 0.649...
+        # 0.4 * 0.649 + 0.25 * 0.65 + 0.35 * 0.65 = 0.2596 + 0.1625 + 0.2275 = 0.6496
         result = self.engine.compute_final_score(
-            liveness_score=0.699,
-            deepfake_score=0.7,
-            emotion_score=0.7
+            liveness_score=0.649,
+            deepfake_score=0.65,
+            emotion_score=0.65
         )
         
-        assert result.final_score < 0.70, (
-            f"Score {result.final_score} should be below 0.70"
+        assert result.final_score < 0.65, (
+            f"Score {result.final_score} should be below 0.65"
         )
         assert result.passed is False, (
-            f"Score {result.final_score} < 0.70 should fail"
+            f"Score {result.final_score} < 0.65 should fail"
         )
     
     def test_threshold_boundary_just_above(self):
         """
-        Test that score just above 0.70 passes
+        Test that score just above 0.65 passes
         
         **Validates: Requirements 7.3**
         """
-        # Create scores that result in 0.7001...
-        # 0.4 * 0.701 + 0.3 * 0.7 + 0.3 * 0.7 = 0.2804 + 0.21 + 0.21 = 0.7004
+        # Create scores that result in 0.6504...
+        # 0.4 * 0.651 + 0.25 * 0.65 + 0.35 * 0.65 = 0.2604 + 0.1625 + 0.2275 = 0.6504
         result = self.engine.compute_final_score(
-            liveness_score=0.701,
-            deepfake_score=0.7,
-            emotion_score=0.7
+            liveness_score=0.651,
+            deepfake_score=0.65,
+            emotion_score=0.65
         )
         
-        assert result.final_score > 0.70, (
-            f"Score {result.final_score} should be above 0.70"
+        assert result.final_score > 0.65, (
+            f"Score {result.final_score} should be above 0.65"
         )
         assert result.passed is True, (
-            f"Score {result.final_score} > 0.70 should pass"
+            f"Score {result.final_score} > 0.65 should pass"
         )

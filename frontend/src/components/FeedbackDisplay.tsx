@@ -89,19 +89,19 @@ export default function FeedbackDisplay({
       <div className="bg-void-200/80 border border-white/[0.06] p-5" style={{ borderRadius: '2px' }}>
         <div className="flex items-center justify-between mb-3">
           <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-ink-400">Current Score</span>
-          <span className="text-[10px] font-mono tracking-[0.15em] text-ink-500">Threshold: 0.70</span>
+          <span className="text-[10px] font-mono tracking-[0.15em] text-ink-500">Threshold: 0.65</span>
         </div>
         <div className="relative w-full h-px bg-white/[0.06] overflow-hidden mb-3">
           <motion.div 
             className={`absolute left-0 top-0 h-full transition-all duration-500 ${
-              currentScore >= 0.7 ? 'bg-neon-green shadow-[0_0_8px_rgba(0,255,136,0.4)]' : 'bg-neon-cyan shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+              currentScore >= 0.65 ? 'bg-neon-green shadow-[0_0_8px_rgba(0,255,136,0.4)]' : 'bg-neon-cyan shadow-[0_0_8px_rgba(0,240,255,0.3)]'
             }`}
             style={{ width: `${currentScore * 100}%` }}
           />
         </div>
         <div className="text-right">
           <span className={`font-mono text-2xl font-bold ${
-            currentScore >= 0.7 ? 'text-neon-green' : 'text-ink-200'
+            currentScore >= 0.65 ? 'text-neon-green' : 'text-ink-200'
           }`}>
             {(currentScore * 100).toFixed(0)}%
           </span>

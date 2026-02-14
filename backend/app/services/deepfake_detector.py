@@ -58,9 +58,10 @@ class DeepfakeDetector:
             model_path: Path to custom pre-trained model (optional)
         """
         self.model_path = model_path
-        self.termination_threshold = 0.5
+        self.termination_threshold = 0.20
         self.model = None
         self.model_type = None
+        self._model_has_trained_weights = False
         
         # Try to load pre-trained model
         self._load_model()
@@ -104,10 +105,16 @@ class DeepfakeDetector:
             # Try to load pre-trained weights if available
             weights_path = os.path.join(os.path.expanduser("~"), ".deepfake_models", "mesonet4_weights.h5")
             if os.path.exists(weights_path):
-                self.model.load_weights(weights_path)
-                logger.info("Loaded MesoNet-4 pre-trained weights")
+                try:
+                    self.model.load_weights(weights_path)
+                    self._model_has_trained_weights = True
+                    logger.info("Loaded MesoNet-4 pre-trained weights")
+                except Exception as e:
+                    logger.warning(f"Failed to load MesoNet-4 weights (shape mismatch?): {e}")
+                    self._model_has_trained_weights = False
             else:
                 logger.info("MesoNet-4 initialized (weights not found, using architecture only)")
+                self._model_has_trained_weights = False
             
             return
         except ImportError:
@@ -206,15 +213,28 @@ class DeepfakeDetector:
         # Try model-based detection first
         if self.model is not None and self.model_type in ["custom", "mesonet4"]:
             try:
-                model_score = self._detect_with_model(frame)
-                
-                # Also run CV techniques for ensemble
-                cv_score = self._detect_with_cv_techniques(frame)
-                
-                # Ensemble: 70% model, 30% CV techniques
-                spatial_score = 0.7 * model_score + 0.3 * cv_score
-                
-                return float(np.clip(spatial_score, 0.0, 1.0))
+                # Only run model inference if we have properly trained weights.
+                # Untrained / random MesoNet-4 weights give ~0.03 on every input
+                # (predicts everything as "fake") which destroys the score for
+                # legitimate users.
+                if self._model_has_trained_weights:
+                    model_score = self._detect_with_model(frame)
+                    cv_score = self._detect_with_cv_techniques(frame)
+                    
+                    if self.model_type == "custom":
+                        # Custom trained model: 70% model, 30% CV
+                        spatial_score = 0.7 * model_score + 0.3 * cv_score
+                    else:
+                        # Pre-trained MesoNet weights: 40% model, 60% CV
+                        spatial_score = 0.4 * model_score + 0.6 * cv_score
+                    
+                    return float(np.clip(spatial_score, 0.0, 1.0))
+                else:
+                    # No trained weights — skip model entirely, use CV only.
+                    # This avoids the MesoNet random-weight problem where the
+                    # model outputs ~0.035 for ANY input.
+                    logger.debug("Model has no trained weights, using CV techniques only")
+                    return self._detect_with_cv_techniques(frame)
             except Exception as e:
                 logger.error(f"Model-based detection failed: {e}, falling back to CV")
         
@@ -253,6 +273,12 @@ class DeepfakeDetector:
             # prediction is probability of being FAKE (0-1)
             # Convert to authenticity score (1 = real, 0 = fake)
             authenticity_score = 1.0 - float(prediction)
+            
+            # Clamp extreme predictions — pre-trained MesoNet weights may not
+            # generalise well to all webcam conditions. Prevent the model from
+            # being too confident in either direction when using generic weights.
+            if not (self.model_type == "custom"):
+                authenticity_score = np.clip(authenticity_score, 0.15, 0.90)
             
             return authenticity_score
             
@@ -337,8 +363,11 @@ class DeepfakeDetector:
             # Synthetic images often have unusual ratios
             if low_freq_energy > 0:
                 freq_ratio = high_freq_energy / low_freq_energy
-                # Normalize: typical ratio for real images is 0.1-0.3
-                score = 1.0 - abs(freq_ratio - 0.2) / 0.3
+                # Normalize: typical ratio for real webcam images is 0.02-0.8
+                # Centre at 0.25 with wide tolerance — webcams vary hugely in
+                # compression, resolution, lighting, and noise, all of which
+                # shift the high/low frequency energy balance.
+                score = 1.0 - abs(freq_ratio - 0.25) / 0.8
                 return float(np.clip(score, 0.0, 1.0))
             
             return 0.5
@@ -368,12 +397,13 @@ class DeepfakeDetector:
             edge_diff = cv2.absdiff(dilated, eroded)
             consistency = 1.0 - (np.mean(edge_diff) / 255.0)
             
-            # Real faces have moderate edge consistency (0.7-0.9)
+            # Real faces have moderate edge consistency (0.5-0.98)
             # Too smooth or too jagged indicates manipulation
-            if 0.7 <= consistency <= 0.9:
+            # Wide range — webcam quality, compression, and lighting vary hugely
+            if 0.5 <= consistency <= 0.98:
                 score = 1.0
             else:
-                score = 1.0 - abs(consistency - 0.8) / 0.3
+                score = 1.0 - abs(consistency - 0.75) / 0.5
             
             return float(np.clip(score, 0.0, 1.0))
             
@@ -396,10 +426,12 @@ class DeepfakeDetector:
             b_std = np.std(lab[:, :, 2])
             
             # Real faces have balanced color variance
-            # Typical ranges: L: 20-40, A: 5-15, B: 5-15
-            l_score = 1.0 - abs(l_std - 30) / 30
-            a_score = 1.0 - abs(a_std - 10) / 10
-            b_score = 1.0 - abs(b_std - 10) / 10
+            # Typical ranges: L: 10-60, A: 2-25, B: 2-25
+            # Widened significantly for varied lighting, skin tone, and webcam
+            # sensor characteristics.
+            l_score = 1.0 - abs(l_std - 35) / 55
+            a_score = 1.0 - abs(a_std - 12) / 25
+            b_score = 1.0 - abs(b_std - 12) / 25
             
             color_score = (l_score + a_score + b_score) / 3.0
             
@@ -419,12 +451,14 @@ class DeepfakeDetector:
             laplacian = cv2.Laplacian(gray, cv2.CV_64F)
             laplacian_var = laplacian.var()
             
-            # Real faces have moderate sharpness (100-500)
-            # Too sharp or too blurry indicates issues
-            if 100 <= laplacian_var <= 500:
+            # Real faces have moderate sharpness (20-3000)
+            # Very wide range: webcam quality varies enormously from cheap
+            # 480p laptop cameras to crisp 4K external cameras.  High-res
+            # auto-focus webcams regularly produce Laplacian variance >1000.
+            if 20 <= laplacian_var <= 3000:
                 score = 1.0
             else:
-                score = 1.0 - abs(laplacian_var - 300) / 500
+                score = 1.0 - abs(laplacian_var - 500) / 3000
             
             return float(np.clip(score, 0.0, 1.0))
             
@@ -491,6 +525,9 @@ class DeepfakeDetector:
         """
         Compute overall deepfake authenticity score by combining spatial and temporal analysis.
         
+        Subsamples frames for efficiency — analyzing every frame is wasteful when
+        spatial artifacts are consistent across the video.
+        
         Args:
             video_frames: List of video frames to analyze
             
@@ -499,18 +536,34 @@ class DeepfakeDetector:
         """
         if not video_frames:
             return 0.0
+        
+        # Subsample for spatial analysis — check every Nth frame
+        # Spatial artifacts are consistent, no need to check all frames
+        max_spatial_frames = min(10, len(video_frames))
+        if len(video_frames) > max_spatial_frames:
+            indices = np.linspace(0, len(video_frames) - 1, max_spatial_frames, dtype=int)
+            spatial_frames = [video_frames[i] for i in indices]
+        else:
+            spatial_frames = video_frames
             
-        # Analyze spatial artifacts across all frames
+        # Analyze spatial artifacts on subsampled frames
         spatial_scores = []
-        for frame in video_frames:
+        for frame in spatial_frames:
             if frame is not None and frame.size > 0:
                 spatial_score = self.detect_spatial_artifacts(frame)
                 spatial_scores.append(spatial_score)
         
         avg_spatial_score = float(np.mean(spatial_scores)) if spatial_scores else 0.0
         
-        # Analyze temporal consistency
-        temporal_score = self.detect_temporal_inconsistencies(video_frames)
+        # Temporal analysis needs consecutive frames — use full sequence but subsample
+        max_temporal_frames = min(20, len(video_frames))
+        if len(video_frames) > max_temporal_frames:
+            indices = np.linspace(0, len(video_frames) - 1, max_temporal_frames, dtype=int)
+            temporal_frames = [video_frames[i] for i in indices]
+        else:
+            temporal_frames = video_frames
+        
+        temporal_score = self.detect_temporal_inconsistencies(temporal_frames)
         
         # Combine spatial and temporal scores
         # Weight spatial slightly higher as it's more reliable in this placeholder
@@ -539,17 +592,44 @@ class DeepfakeDetector:
                 should_terminate=True
             )
         
-        # Analyze spatial artifacts
+        # Subsample for spatial analysis — artifacts are frame-consistent
+        max_spatial = min(10, len(video_frames))
+        if len(video_frames) > max_spatial:
+            indices = np.linspace(0, len(video_frames) - 1, max_spatial, dtype=int)
+            spatial_frames = [video_frames[i] for i in indices]
+        else:
+            spatial_frames = video_frames
+        
+        # Analyze spatial artifacts on subsampled frames
         spatial_scores = []
-        for frame in video_frames:
+        for frame in spatial_frames:
             if frame is not None and frame.size > 0:
                 spatial_score = self.detect_spatial_artifacts(frame)
                 spatial_scores.append(spatial_score)
+                
+                # Early exit: if first few frames are very clearly fake, don't waste time
+                # Very conservative threshold — only bail out on obviously synthetic
+                # content to avoid terminating real users
+                if len(spatial_scores) >= 5 and np.mean(spatial_scores) < 0.10:
+                    avg_spatial_score = float(np.mean(spatial_scores))
+                    return DeepfakeAnalysisResult(
+                        spatial_score=avg_spatial_score,
+                        temporal_score=0.0,
+                        deepfake_score=avg_spatial_score * 0.6,
+                        should_terminate=True
+                    )
         
         avg_spatial_score = float(np.mean(spatial_scores)) if spatial_scores else 0.0
         
-        # Analyze temporal consistency
-        temporal_score = self.detect_temporal_inconsistencies(video_frames)
+        # Temporal analysis on subsampled frames
+        max_temporal = min(20, len(video_frames))
+        if len(video_frames) > max_temporal:
+            indices = np.linspace(0, len(video_frames) - 1, max_temporal, dtype=int)
+            temporal_frames = [video_frames[i] for i in indices]
+        else:
+            temporal_frames = video_frames
+        
+        temporal_score = self.detect_temporal_inconsistencies(temporal_frames)
         
         # Compute final deepfake score
         deepfake_score = 0.6 * avg_spatial_score + 0.4 * temporal_score

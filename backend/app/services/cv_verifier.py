@@ -3,6 +3,7 @@ Computer Vision Verifier for liveness detection and challenge verification
 """
 import cv2
 import logging
+import time
 import mediapipe as mp
 import numpy as np
 from typing import List, Optional
@@ -43,6 +44,12 @@ class CVVerifier:
         
         # Store previous frame landmarks for motion detection
         self.previous_landmarks = None
+        
+        # === PIPELINE OPTIMIZATION: Detection result cache ===
+        # Cache detection results to avoid re-running MediaPipe on the same frames
+        # Key: id(frame), Value: (landmarks_array, blendshapes_dict, detection_result)
+        self._detection_cache = {}
+        self._cache_max_size = 300  # keep cache bounded
     
     @property
     def face_landmarker(self):
@@ -121,6 +128,76 @@ class CVVerifier:
         
         return rgb_frame
     
+    def _detect_cached(self, frame: np.ndarray):
+        """
+        Run MediaPipe face detection with caching to avoid redundant processing.
+        
+        Returns (landmarks_array, blendshapes_dict) or (None, None) if no face detected.
+        Uses frame identity (id) as cache key since the same ndarray objects are
+        passed through compute_liveness_score, verify_challenge, etc.
+        """
+        frame_key = id(frame)
+        
+        if frame_key in self._detection_cache:
+            return self._detection_cache[frame_key]
+        
+        if self.face_landmarker is None:
+            return None, None
+        
+        rgb_frame = self.preprocess_frame(frame)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        
+        try:
+            detection_result = self.face_landmarker.detect(mp_image)
+        except Exception:
+            self._detection_cache[frame_key] = (None, None)
+            return None, None
+        
+        if not detection_result.face_landmarks or len(detection_result.face_landmarks) == 0:
+            self._detection_cache[frame_key] = (None, None)
+            return None, None
+        
+        landmarks = detection_result.face_landmarks[0]
+        landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
+        blendshapes = self._extract_blendshapes(detection_result)
+        
+        result = (landmarks_array, blendshapes if blendshapes else {})
+        
+        # Evict old entries if cache is full
+        if len(self._detection_cache) >= self._cache_max_size:
+            # Remove oldest half
+            keys = list(self._detection_cache.keys())
+            for k in keys[:len(keys)//2]:
+                del self._detection_cache[k]
+        
+        self._detection_cache[frame_key] = result
+        return result
+    
+    def _subsample_frames(self, frames: List[np.ndarray], max_frames: int = 30) -> List[np.ndarray]:
+        """
+        Subsample frames to reduce processing time while maintaining temporal coverage.
+        
+        For 150 frames at 30fps (5s), processing ALL of them through MediaPipe is wasteful.
+        Subsample to max_frames evenly spaced frames to cover the full time range.
+        
+        Args:
+            frames: Full list of video frames
+            max_frames: Maximum number of frames to process
+            
+        Returns:
+            Subsampled list of frames
+        """
+        if len(frames) <= max_frames:
+            return frames
+        
+        # Evenly space frame indices across the full sequence
+        indices = np.linspace(0, len(frames) - 1, max_frames, dtype=int)
+        return [frames[i] for i in indices]
+    
+    def clear_detection_cache(self):
+        """Clear the detection result cache. Call between sessions."""
+        self._detection_cache.clear()
+    
     def compute_liveness_score(self, video_frames: List[np.ndarray]) -> float:
         """
         Analyze frames for 3D depth cues and natural micro-movements.
@@ -144,32 +221,20 @@ class CVVerifier:
             # No frames to analyze
             return 0.0
         
+        # Subsample frames for efficiency — no need to process all 150
+        sampled_frames = self._subsample_frames(video_frames, max_frames=20)
+        
         # Compute movement score across frame sequence
-        movement_score = self.detect_micro_movements(video_frames)
+        movement_score = self.detect_micro_movements(sampled_frames)
         
         # Compute depth score from the first frame with detected landmarks
         depth_score = 0.0
         if self.face_landmarker is None:
             return 0.5 * movement_score
-        for frame in video_frames:
-            # Preprocess frame
-            rgb_frame = self.preprocess_frame(frame)
+        for frame in sampled_frames:
+            landmarks_array, _ = self._detect_cached(frame)
             
-            # Convert to MediaPipe Image
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            
-            try:
-                # Detect landmarks
-                detection_result = self.face_landmarker.detect(mp_image)
-            except Exception:
-                continue
-            
-            if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
-                # Extract first face landmarks
-                landmarks = detection_result.face_landmarks[0]
-                # Convert to numpy array
-                landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
-                
+            if landmarks_array is not None:
                 # Compute depth score
                 depth_score = self.detect_3d_depth(landmarks_array)
                 break  # Use first frame with detected face
@@ -201,7 +266,6 @@ class CVVerifier:
             
         Validates Requirements 4.2, 4.3
         """
-        import time
         
         if not video_frames or len(video_frames) == 0:
             # No frames to analyze
@@ -400,32 +464,19 @@ class CVVerifier:
             # Need at least 2 frames to detect movement
             return 0.0
         
-        # Extract landmarks from all frames
+        # Extract landmarks from all frames using cached detection.
+        # Skip frames where no face is detected instead of failing the
+        # entire sequence — a single bad frame (blink, lighting glitch,
+        # momentary head turn) should not kill the liveness score.
         all_landmarks = []
         if self.face_landmarker is None:
             return 0.0
         for frame in frame_sequence:
-            # Preprocess frame
-            rgb_frame = self.preprocess_frame(frame)
+            landmarks_array, _ = self._detect_cached(frame)
             
-            # Convert to MediaPipe Image
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            
-            try:
-                # Detect landmarks
-                detection_result = self.face_landmarker.detect(mp_image)
-            except Exception:
-                return 0.0
-            
-            if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
-                # Extract first face landmarks
-                landmarks = detection_result.face_landmarks[0]
-                # Convert to numpy array
-                landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
+            if landmarks_array is not None:
                 all_landmarks.append(landmarks_array)
-            else:
-                # No face detected in this frame
-                return 0.0
+            # else: skip this frame gracefully
         
         if len(all_landmarks) < 2:
             # Insufficient landmark data
@@ -480,8 +531,9 @@ class CVVerifier:
         ear_range = np.max(ear_values) - np.min(ear_values)
         
         # Score based on EAR variation (indicates blinking)
-        # Natural blinking causes variance ~0.001-0.005
-        blink_score = np.clip(ear_variance / 0.003, 0.0, 1.0)
+        # Natural blinking causes variance ~0.0005-0.01
+        # Lowered divisor so smaller variance still produces a decent score
+        blink_score = np.clip(ear_variance / 0.002, 0.0, 1.0)
         
         # 2. Subtle head motion detection
         head_positions = []
@@ -500,10 +552,11 @@ class CVVerifier:
             movement = np.linalg.norm(head_positions[i] - head_positions[i-1])
             head_movements.append(movement)
         
-        # Natural micro-movements: ~0.001-0.01 per frame
-        # Static images/video: < 0.0005
+        # Natural micro-movements: ~0.0005-0.01 per frame
+        # Static images/video: < 0.0002
+        # Lowered divisor for better sensitivity to subtle real movements
         avg_head_movement = np.mean(head_movements) if head_movements else 0.0
-        head_score = np.clip(avg_head_movement / 0.005, 0.0, 1.0)
+        head_score = np.clip(avg_head_movement / 0.003, 0.0, 1.0)
         
         # 3. Landmark jitter detection (natural instability)
         # Track a stable landmark (nose tip) across frames
@@ -513,9 +566,10 @@ class CVVerifier:
         nose_variance = np.var(nose_positions, axis=0)
         total_nose_variance = np.sum(nose_variance)
         
-        # Natural jitter: ~0.00001-0.0001
-        # Static: < 0.000005
-        jitter_score = np.clip(total_nose_variance / 0.00005, 0.0, 1.0)
+        # Natural jitter: ~0.000005-0.0001
+        # Static: < 0.000002
+        # Lowered divisor for better sensitivity
+        jitter_score = np.clip(total_nose_variance / 0.00003, 0.0, 1.0)
         
         # Combine scores with weights
         # Blink detection is most reliable (50%)
@@ -542,10 +596,14 @@ class CVVerifier:
         """
         Verify gesture challenge using blendshapes (primary) and landmarks (fallback).
         Uses PEAK movement detection so users can perform the gesture and return to neutral.
+        Uses cached detection results to avoid redundant MediaPipe calls.
         """
         if len(video_frames) < 2:
             logger.warning(f"Gesture '{gesture}': need >=2 frames, got {len(video_frames)}")
             return False, 0.0
+        
+        # Subsample for gesture detection — 30 frames is plenty
+        sampled_frames = self._subsample_frames(video_frames, max_frames=30)
         
         all_landmarks = []
         all_blendshapes = []
@@ -553,19 +611,11 @@ class CVVerifier:
             logger.warning("face_landmarker is None — cannot verify gesture")
             return False, 0.0
 
-        for frame in video_frames:
-            rgb_frame = self.preprocess_frame(frame)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            try:
-                detection_result = self.face_landmarker.detect(mp_image)
-            except Exception:
-                continue
+        for frame in sampled_frames:
+            landmarks_array, bs = self._detect_cached(frame)
             
-            if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
-                landmarks = detection_result.face_landmarks[0]
-                landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
+            if landmarks_array is not None:
                 all_landmarks.append(landmarks_array)
-                bs = self._extract_blendshapes(detection_result)
                 all_blendshapes.append(bs if bs else {})
         
         if len(all_landmarks) < 2:
@@ -800,9 +850,13 @@ class CVVerifier:
         """
         Verify expression challenge using blendshapes (primary) and landmarks (fallback).
         Checks ALL frames and uses the best-scoring one.
+        Uses cached detection results to avoid redundant MediaPipe calls.
         """
         if len(video_frames) == 0:
             return False, 0.0
+        
+        # Subsample for expression detection — 30 frames is plenty
+        sampled_frames = self._subsample_frames(video_frames, max_frames=30)
         
         all_landmarks = []
         all_blendshapes = []
@@ -810,19 +864,11 @@ class CVVerifier:
             logger.warning("face_landmarker is None — cannot verify expression")
             return False, 0.0
 
-        for frame in video_frames:
-            rgb_frame = self.preprocess_frame(frame)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            try:
-                detection_result = self.face_landmarker.detect(mp_image)
-            except Exception:
-                continue
+        for frame in sampled_frames:
+            landmarks_array, bs = self._detect_cached(frame)
             
-            if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
-                landmarks = detection_result.face_landmarks[0]
-                landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
+            if landmarks_array is not None:
                 all_landmarks.append(landmarks_array)
-                bs = self._extract_blendshapes(detection_result)
                 all_blendshapes.append(bs if bs else {})
         
         if len(all_landmarks) == 0:
@@ -956,6 +1002,7 @@ class CVVerifier:
         return best_pass, best_confidence
     
     def __del__(self):
-        """Clean up MediaPipe resources"""
+        """Clean up MediaPipe resources and caches"""
+        self._detection_cache.clear()
         if self._face_landmarker is not None:
             self._face_landmarker.close()

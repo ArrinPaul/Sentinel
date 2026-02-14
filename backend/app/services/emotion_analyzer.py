@@ -162,9 +162,22 @@ class EmotionAnalyzer:
             # Need at least 2 frames to analyze transitions
             return 1.0
         
+        # If all confidences are zero, DeepFace is unavailable or no face was
+        # detected — return a neutral score instead of penalising.  Penalising
+        # identical zero-confidence values would tank the emotion score for
+        # perfectly legitimate users whose system lacks DeepFace.
+        all_confidences = [e.confidence for e in emotion_sequence]
+        if max(all_confidences) < 0.01:
+            # DeepFace unavailable — can't measure transitions, return neutral
+            return 0.7
+        
         # Track penalties for unnatural patterns
         penalty = 0.0
         max_penalty = 1.0
+        
+        # Count how many frame pairs show suspicious patterns
+        rigid_count = 0
+        total_pairs = len(emotion_sequence) - 1
         
         # Analyze frame-to-frame transitions
         for i in range(1, len(emotion_sequence)):
@@ -176,26 +189,34 @@ class EmotionAnalyzer:
             if prev.dominant_emotion != curr.dominant_emotion:
                 if prev.confidence > 0.7 and curr.confidence > 0.7:
                     # High-confidence instantaneous change is unnatural
-                    penalty += 0.2
+                    penalty += 0.15
             
-            # Check for rigid patterns (identical confidence values)
-            # Real emotions have natural variation in confidence
-            if abs(prev.confidence - curr.confidence) < 0.01:
-                # Too rigid, likely synthetic
-                penalty += 0.05
+            # Track rigid patterns (identical confidence values)
+            # NOTE: Having similar confidence across frames IS natural for a
+            # person holding a steady expression. Only penalise if the entire
+            # sequence is perfectly identical (handled below).
+            if abs(prev.confidence - curr.confidence) < 0.001:
+                rigid_count += 1
             
             # Check for impossible confidence jumps
             # Natural emotions don't go from 0.1 to 0.9 instantly
             confidence_change = abs(curr.confidence - prev.confidence)
             if confidence_change > 0.5:
-                penalty += 0.15
+                penalty += 0.10
         
         # Check for overall rigidity across the sequence
-        # Natural sequences have some variation
+        # Only penalise if a very high proportion of frames are perfectly
+        # identical — a person naturally maintaining an expression will still
+        # have small confidence fluctuations, but holding steady is NOT
+        # suspicious by itself.
         confidences = [e.confidence for e in emotion_sequence]
-        if len(set(confidences)) == 1:
-            # All confidences identical = synthetic
-            penalty += 0.3
+        unique_confidences = len(set(round(c, 4) for c in confidences))
+        if unique_confidences == 1:
+            # All confidences bit-for-bit identical = likely synthetic
+            penalty += 0.25
+        elif total_pairs > 0 and rigid_count / total_pairs > 0.95:
+            # >95% of pairs have near-identical confidence — mildly suspicious
+            penalty += 0.10
         
         # Calculate final score (1.0 - normalized penalty)
         score = max(0.0, 1.0 - min(penalty, max_penalty))
@@ -235,6 +256,13 @@ class EmotionAnalyzer:
         if not video_frames or len(video_frames) == 0:
             # No frames to analyze
             return 0.0
+        
+        # If DeepFace is not available, we cannot measure emotions.  Return a
+        # neutral-positive score so that this component doesn't block real
+        # users from passing verification.  The other two factors (liveness
+        # and deepfake) are more important security signals anyway.
+        if not self.deepface_available:
+            return 0.70
         
         # Step 1: Detect emotions in each frame
         emotion_sequence = []

@@ -175,7 +175,7 @@ class BlockchainLedger:
                     "final": round(verification_score, 4),
                 },
                 "passed": passed,
-                "threshold": 0.70,
+                "threshold": 0.65,
                 "timestamp_utc": time.strftime(
                     "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                 ),

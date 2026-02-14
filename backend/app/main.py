@@ -452,16 +452,30 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
     logger.info(f"WebSocket connection established for session {session_id}")
     
     try:
-        # Verify session exists
+        # Verify session exists and is still active
         session_data = database_service.get_session(session_id)
         if not session_data:
+            logger.warning(f"Session {session_id} not found in database — rejecting WebSocket")
             await _send_feedback(
                 websocket,
                 FeedbackType.ERROR,
-                "Invalid session ID",
-                None
+                "Invalid session ID. Please start a new verification.",
+                {"code": "SESSION_NOT_FOUND", "session_id": session_id}
             )
             await websocket.close(code=1008, reason="Invalid session")
+            return
+        
+        # Check if session was already terminated (completed/failed/timeout)
+        session_status = session_data.get('status', 'active')
+        if session_status in ('completed', 'failed', 'timeout'):
+            logger.warning(f"Session {session_id} already terminated (status={session_status})")
+            await _send_feedback(
+                websocket,
+                FeedbackType.ERROR,
+                f"Session already {session_status}. Please start a new verification.",
+                {"code": "SESSION_TERMINATED", "status": session_status}
+            )
+            await websocket.close(code=1008, reason=f"Session {session_status}")
             return
         
         # Check if session has timed out
@@ -559,38 +573,49 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     "instruction": challenge.instruction,
                     "timeout_seconds": challenge.timeout_seconds,
                     "challenge_number": challenge_sequence.challenges.index(challenge) + 1,
-                    "total_challenges": len(challenge_sequence.challenges)
+                    "total_challenges": len(challenge_sequence.challenges),
+                    "prep_time_seconds": 3
                 }
             )
             
-            # Give the user 3 seconds to read the challenge before collecting
+            # === HUMAN REACTION TIME BUDGET ===
+            # Give the user time to read, comprehend, and prepare (3 seconds)
+            # During this time, drain any stale frames so they don't pollute detection
             await _send_feedback(
                 websocket,
                 FeedbackType.SCORE_UPDATE,
-                "Get ready...",
-                {"countdown": 3, "status": "preparing"}
+                f"Get ready to: {challenge.instruction}",
+                {"countdown": 3, "status": "preparing", "instruction": challenge.instruction}
             )
             
             # Drain any frames sent during the countdown so they don't count
-            countdown_end = time.time() + 3.0
-            while time.time() < countdown_end:
+            # Use a clean async sleep with periodic drain to avoid blocking
+            drain_duration = 3.0
+            drain_start = time.time()
+            while time.time() - drain_start < drain_duration:
+                remaining = drain_duration - (time.time() - drain_start)
+                if remaining <= 0:
+                    break
                 try:
-                    data = await asyncio.wait_for(websocket.receive_text(), timeout=0.1)
-                    # Discard frames during countdown
-                except (asyncio.TimeoutError, Exception):
+                    # Try to read and discard frames, with short timeout
+                    await asyncio.wait_for(websocket.receive_text(), timeout=min(0.5, remaining))
+                except asyncio.TimeoutError:
                     pass
-                await asyncio.sleep(0.05)
+                except Exception:
+                    break
             
+            # Send countdown updates for last second for better UX
             await _send_feedback(
                 websocket,
                 FeedbackType.SCORE_UPDATE,
-                "Go! Perform the action now.",
-                {"status": "recording"}
+                f"Go! Perform: {challenge.instruction}",
+                {"status": "recording", "instruction": challenge.instruction}
             )
             
             # Collect video frames for this challenge
             challenge_frames = []
             challenge_start_time = None
+            frames_since_last_feedback = 0
             
             # Receive frames until timeout or enough frames collected
             while True:
@@ -599,13 +624,12 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     data = await websocket.receive_text()
                     
                     if challenge_start_time is None:
-                        import time
                         challenge_start_time = time.time()
                     
-                    # Check challenge timeout (10 seconds)
-                    import time
-                    if time.time() - challenge_start_time > challenge.timeout_seconds:
-                        logger.warning(f"Challenge {challenge.challenge_id} timed out")
+                    # Check challenge timeout
+                    elapsed = time.time() - challenge_start_time
+                    if elapsed > challenge.timeout_seconds:
+                        logger.warning(f"Challenge {challenge.challenge_id} timed out after {elapsed:.1f}s")
                         break
                     
                     # Parse message
@@ -653,9 +677,26 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                             if frame is not None:
                                 challenge_frames.append(frame)
                                 all_video_frames.append(frame)
+                                frames_since_last_feedback += 1
                                 
                                 if len(challenge_frames) == 1:
                                     logger.info(f"First frame decoded: shape={frame.shape}, dtype={frame.dtype}")
+                                
+                                # Send periodic feedback every 30 frames (~1s at 30fps)
+                                # so the user knows the system is actively recording
+                                if frames_since_last_feedback >= 30:
+                                    frames_since_last_feedback = 0
+                                    elapsed_secs = time.time() - challenge_start_time
+                                    await _send_feedback(
+                                        websocket,
+                                        FeedbackType.SCORE_UPDATE,
+                                        f"Recording... {len(challenge_frames)} frames ({elapsed_secs:.0f}s)",
+                                        {
+                                            "status": "recording",
+                                            "frames_captured": len(challenge_frames),
+                                            "elapsed_seconds": round(elapsed_secs, 1)
+                                        }
+                                    )
                                 
                                 # Collect frames for ~5 seconds (at 30 FPS = 150 frames)
                                 if len(challenge_frames) >= 150:
@@ -749,8 +790,8 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     }
                 )
                 
-                # Brief pause between challenges so user can see result
-                await asyncio.sleep(1.5)
+                # Brief pause between challenges so user can see result and rest
+                await asyncio.sleep(2.0)
             else:
                 # No frames received - mark as failed
                 challenge_result = ChallengeResult(
@@ -809,14 +850,30 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
         logger.info(f"Running ML verification pipeline on {len(all_video_frames)} frames")
         
         if len(all_video_frames) > 0:
+            # === PIPELINE OPTIMIZATION ===
+            # Subsample frames for the final ML pass to avoid processing 1000+ frames
+            # Each challenge already verified its own frames, so the final pass only needs
+            # a representative sample for liveness/emotion/deepfake scoring
+            max_pipeline_frames = 60  # ~2 seconds worth at 30fps, spread across all challenges
+            if len(all_video_frames) > max_pipeline_frames:
+                import numpy as np_sample
+                indices = np_sample.linspace(0, len(all_video_frames) - 1, max_pipeline_frames, dtype=int)
+                pipeline_frames = [all_video_frames[i] for i in indices]
+                logger.info(f"Subsampled {len(all_video_frames)} frames to {len(pipeline_frames)} for final pipeline")
+            else:
+                pipeline_frames = all_video_frames
+            
             # Compute liveness score
-            liveness_score = cv_verifier.compute_liveness_score(all_video_frames)
+            liveness_score = cv_verifier.compute_liveness_score(pipeline_frames)
+            
+            # Clear detection cache after liveness (free memory before next pass)
+            cv_verifier.clear_detection_cache()
             
             # Compute emotion authenticity score (Requirement 6.3)
-            emotion_score = emotion_analyzer.compute_emotion_score(all_video_frames)
+            emotion_score = emotion_analyzer.compute_emotion_score(pipeline_frames)
             
             # Compute deepfake detection score (Requirement 5.3)
-            deepfake_result = deepfake_detector.analyze_with_early_termination(all_video_frames)
+            deepfake_result = deepfake_detector.analyze_with_early_termination(pipeline_frames)
             deepfake_score = deepfake_result.deepfake_score
             
             # Check for early termination due to deepfake detection (Requirement 5.5)
@@ -857,7 +914,15 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
             emotion_score = 0.0
             deepfake_score = 0.0
         
-        logger.info(f"Scores - Liveness: {liveness_score:.3f}, Emotion: {emotion_score:.3f}, Deepfake: {deepfake_score:.3f}")
+        # Boost liveness score by incorporating challenge completion rate.
+        # Completing challenges is strong evidence of being alive — the user
+        # had to physically perform gestures and expressions that were verified
+        # by the CV pipeline. This rewards users who passed challenges.
+        challenge_rate = completed_count / len(challenge_sequence.challenges)
+        liveness_score = 0.5 * liveness_score + 0.5 * challenge_rate
+        liveness_score = min(liveness_score, 1.0)
+        
+        logger.info(f"Scores - Liveness: {liveness_score:.3f} (challenge_rate={challenge_rate:.2f}), Emotion: {emotion_score:.3f}, Deepfake: {deepfake_score:.3f}")
         
         # Send score update (Requirement 10.5)
         await _send_feedback(

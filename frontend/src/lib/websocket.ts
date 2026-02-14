@@ -17,6 +17,7 @@ export class WebSocketClient {
   private onErrorCallback?: (error: Event) => void
   private onCloseCallback?: (event: CloseEvent) => void
   private reconnectAttempted: boolean = false
+  private intentionalClose: boolean = false
 
   constructor(sessionId: string) {
     this.sessionId = sessionId
@@ -56,11 +57,19 @@ export class WebSocketClient {
         }
 
         this.ws.onclose = (event) => {
-          console.log('WebSocket closed with code:', event.code)
+          console.log('WebSocket closed with code:', event.code, 'reason:', event.reason)
           
-          // Implement single reconnection attempt on unexpected disconnect
-          if (!event.wasClean && !this.reconnectAttempted && event.code !== 1000) {
-            console.log('Attempting to reconnect...')
+          // Don't reconnect if:
+          // - Clean close (1000)
+          // - Session terminated by server (1008 = policy violation — invalid/expired session)
+          // - Already attempted reconnection
+          const shouldReconnect = !event.wasClean 
+            && !this.reconnectAttempted 
+            && event.code !== 1000 
+            && event.code !== 1008  // Server rejected session (invalid/terminated)
+          
+          if (shouldReconnect) {
+            console.log('Attempting to reconnect in 2s...')
             this.reconnectAttempted = true
             setTimeout(() => {
               this.connect().catch((error) => {
@@ -69,6 +78,9 @@ export class WebSocketClient {
               })
             }, 2000)
           } else {
+            if (event.code === 1008) {
+              console.warn('Session rejected by server:', event.reason)
+            }
             this.onCloseCallback?.(event)
           }
         }
@@ -110,6 +122,7 @@ export class WebSocketClient {
    * Disconnect and close WebSocket connection
    */
   disconnect(): void {
+    this.intentionalClose = true
     if (this.ws) {
       this.ws.close(1000, 'Client disconnect')
       this.ws = null

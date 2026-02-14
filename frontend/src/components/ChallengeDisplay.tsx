@@ -99,7 +99,7 @@ export default function ChallengeDisplay({
         )}
       </div>
 
-      <div className="relative w-full h-px bg-white/[0.06] overflow-hidden">
+      <div className="relative w-full h-1.5 bg-white/[0.06] overflow-hidden" style={{ borderRadius: '1px' }}>
         <motion.div 
           className={`absolute left-0 top-0 h-full transition-all duration-1000 ${
             progress > 50 ? 'bg-neon-green' : progress > 25 ? 'bg-neon-amber' : 'bg-neon-red'
@@ -109,12 +109,22 @@ export default function ChallengeDisplay({
         />
       </div>
       
-      <div className="text-center mt-4">
+      <div className="text-center mt-4 flex items-center justify-center gap-3">
         <span className={`font-mono text-2xl font-bold ${
           progress > 50 ? 'text-ink-200' : progress > 25 ? 'text-neon-amber' : 'text-neon-red'
         }`}>
           {Math.ceil(timeRemaining)}s
         </span>
+        {status === 'get-ready' && (
+          <span className="font-mono text-xs text-ink-500 tracking-widest uppercase">
+            Read the instruction above
+          </span>
+        )}
+        {status === 'recording' && (
+          <span className="font-mono text-xs text-neon-green/70 tracking-widest uppercase">
+            Perform the action naturally
+          </span>
+        )}
       </div>
     </div>
   )

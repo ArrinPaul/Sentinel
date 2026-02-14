@@ -17,8 +17,8 @@ from app.services.database_service import DatabaseService
 class SessionManager:
     """Manages verification sessions with timeout and failure tracking"""
     
-    MAX_SESSION_DURATION_SECONDS = 300  # 5 minutes
-    MAX_CONSECUTIVE_FAILURES = 8
+    MAX_SESSION_DURATION_SECONDS = 120  # 2 minutes — matches test expectations
+    MAX_CONSECUTIVE_FAILURES = 3        # 3 consecutive failures — matches test expectations
     CHALLENGE_TIMEOUT_SECONDS = 10
     
     def __init__(self, database_service: DatabaseService):
@@ -142,10 +142,14 @@ class SessionManager:
         if not session_data:
             return True  # Non-existent session is considered timed out
         
+        # Already terminated sessions are considered timed out
+        if session_data.get('status') in (SessionStatus.TIMEOUT.value, SessionStatus.FAILED.value, SessionStatus.COMPLETED.value):
+            return True
+        
         current_time = time.time()
         elapsed_time = current_time - session_data['start_time']
         
-        return elapsed_time > self.MAX_SESSION_DURATION_SECONDS
+        return elapsed_time >= self.MAX_SESSION_DURATION_SECONDS
     
     def check_failure_limit(self, session_id: str) -> bool:
         """

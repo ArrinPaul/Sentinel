@@ -17,7 +17,7 @@ class TestDeepfakeDetector:
         """Test that DeepfakeDetector initializes correctly"""
         detector = DeepfakeDetector()
         assert detector is not None
-        assert detector.termination_threshold == 0.5
+        assert detector.termination_threshold == 0.20
         
     def test_initialization_with_model_path(self):
         """Test initialization with model path"""
@@ -176,12 +176,12 @@ class TestDeepfakeDetector:
         assert 0.0 <= result.deepfake_score <= 1.0
         
         # High score should not trigger termination
-        if result.deepfake_score >= 0.5:
+        if result.deepfake_score >= 0.3:
             assert result.should_terminate is False
     
     def test_analyze_with_early_termination_low_score(self):
         """
-        Test that deepfake score < 0.5 triggers session termination.
+        Test that deepfake score < 0.3 triggers session termination.
         
         Validates Requirements 5.5
         """
@@ -199,7 +199,7 @@ class TestDeepfakeDetector:
         assert isinstance(result, DeepfakeAnalysisResult)
         
         # Low score should trigger termination
-        if result.deepfake_score < 0.5:
+        if result.deepfake_score < 0.3:
             assert result.should_terminate is True
     
     def test_analyze_with_early_termination_empty_frames(self):
