@@ -6,7 +6,7 @@ echo ========================================
 echo.
 
 echo Starting Backend Server...
-start "Backend Server" cmd /k "cd backend && venv\Scripts\activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "Backend Server" cmd /k "cd backend && venv311\Scripts\activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 timeout /t 5 /nobreak > nul
 

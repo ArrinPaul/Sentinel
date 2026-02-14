@@ -959,6 +959,9 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
             scoring_result=scoring_result
         )
         
+        # Generate blockchain verification ID early so it can be stored in the block
+        blockchain_id = f"SNTL-{uuid.uuid4().hex[:8].upper()}-{uuid.uuid4().hex[:4].upper()}"
+        
         # Record verification result on blockchain ledger (Decentralized audit)
         try:
             verification_block = blockchain_ledger.add_verification_block(
@@ -969,9 +972,9 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 emotion_score=scoring_result.emotion_score,
                 deepfake_score=scoring_result.deepfake_score,
                 passed=scoring_result.passed,
-                metadata={"result_id": result_id}
+                metadata={"result_id": result_id, "blockchain_id": blockchain_id}
             )
-            logger.info(f"Verification recorded on blockchain: block #{verification_block.index}")
+            logger.info(f"Verification recorded on blockchain: block #{verification_block.index}, ID={blockchain_id}")
         except Exception as e:
             logger.error(f"Failed to record verification on blockchain: {e}")
         
@@ -1053,9 +1056,7 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
             # Mark session as completed
             session_manager.terminate_session(session_id, "completed")
             
-            # Generate a unique blockchain verification ID for this user
-            # This ID is tied to the blockchain block and expires with the token (15 min)
-            blockchain_id = f"SNTL-{uuid.uuid4().hex[:8].upper()}-{uuid.uuid4().hex[:4].upper()}"
+            # blockchain_id was generated above and stored in the verification block
             chain_stats = blockchain_ledger.get_chain_stats()
             
             # Send success feedback
@@ -1377,6 +1378,57 @@ async def blockchain_public_key():
             "algorithm": "RSA-PSS with SHA-256",
             "key_size": 2048,
             "usage": "Verify block signatures in the verification ledger",
+        },
+    )
+
+
+@app.get("/api/blockchain/lookup/{blockchain_id}")
+async def blockchain_lookup(blockchain_id: str):
+    """
+    Look up a verification by its SNTL blockchain ID.
+    
+    Returns the block data associated with the given blockchain_id,
+    including verification scores, pass/fail status, and expiry info.
+    """
+    # Search all blocks for the blockchain_id in metadata
+    for block in reversed(blockchain_ledger.chain):
+        metadata = block.data.get("metadata", {})
+        if metadata.get("blockchain_id") == blockchain_id:
+            # Check if the associated token has expired (15 min from block timestamp)
+            created_at = block.timestamp
+            expires_at = created_at + (token_issuer.TOKEN_EXPIRY_MINUTES * 60)
+            now = time.time()
+            is_active = now < expires_at
+            remaining_seconds = max(0, expires_at - now)
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "found": True,
+                    "blockchain_id": blockchain_id,
+                    "block_index": block.index,
+                    "block_hash": block.block_hash,
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                    "is_active": is_active,
+                    "remaining_minutes": round(remaining_seconds / 60, 1),
+                    "verification": {
+                        "scores": block.data.get("scores", {}),
+                        "passed": block.data.get("passed"),
+                        "session_id": block.data.get("session_id"),
+                        "user_id": block.data.get("user_id"),
+                        "timestamp_utc": block.data.get("timestamp_utc"),
+                    },
+                    "signature": block.signature[:64] + "...",
+                },
+            )
+    
+    return JSONResponse(
+        status_code=404,
+        content={
+            "found": False,
+            "blockchain_id": blockchain_id,
+            "error": "No verification found with this blockchain ID",
         },
     )
 
