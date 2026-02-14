@@ -1,6 +1,0 @@
-{
-  "name": "proof-of-life",
-  "framework": "nextjs",
-  "buildCommand": "npm run build",
-  "installCommand": "npm install"
-}

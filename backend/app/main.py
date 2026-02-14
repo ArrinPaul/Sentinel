@@ -67,7 +67,7 @@ app.add_middleware(
 )
 
 # Initialize services
-database_service = DatabaseService()  # Now uses Convex
+database_service = DatabaseService()
 session_manager = SessionManager(database_service)
 challenge_engine = ChallengeEngine()
 
