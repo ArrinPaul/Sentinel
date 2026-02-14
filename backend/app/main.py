@@ -612,9 +612,18 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                                 challenge_frames.append(frame)
                                 all_video_frames.append(frame)
                                 
+                                if len(challenge_frames) == 1:
+                                    logger.info(f"First frame decoded: shape={frame.shape}, dtype={frame.dtype}")
+                                
                                 # Collect frames for ~2 seconds (at 30 FPS = 60 frames)
                                 if len(challenge_frames) >= 60:
                                     break
+                            else:
+                                if len(challenge_frames) == 0:
+                                    logger.warning("Frame decode returned None (first frame)")
+                        else:
+                            if len(challenge_frames) == 0:
+                                logger.warning("Video frame message missing 'frame' field")
                     
                     elif message.get("type") == "challenge_complete":
                         # Client signals challenge completion
