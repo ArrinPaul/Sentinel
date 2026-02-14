@@ -47,7 +47,8 @@ export default function ChallengeDisplay({
     )
   }
 
-  const icon = challengeIcons[challenge.instruction.toLowerCase().replace(/\s+/g, '_')] || '👤'
+  const instructionKey = challenge.instruction?.toLowerCase().replace(/\s+/g, '_') ?? ''
+  const icon = challengeIcons[instructionKey] || '👤'
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-8 border-2 border-blue-500">

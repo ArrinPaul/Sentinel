@@ -47,31 +47,47 @@ class CVVerifier:
         Lazy initialization of MediaPipe FaceLandmarker.
         
         Returns the FaceLandmarker instance, initializing it on first access.
+        Returns None if model cannot be loaded.
         """
         if self._face_landmarker is None:
             if self.model_path is None:
-                raise ValueError(
-                    "Model path must be provided before using face landmarker. "
-                    "Download the model from: "
-                    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Model path not provided. Face landmarker will not be available. "
+                    "Download the model using: python download_mediapipe_model.py"
                 )
+                return None
             
-            # Create base options with model path
-            base_options = mp.tasks.BaseOptions(model_asset_path=self.model_path)
-            
-            # Create FaceLandmarker options
-            options = mp.tasks.vision.FaceLandmarkerOptions(
-                base_options=base_options,
-                running_mode=mp.tasks.vision.RunningMode.IMAGE,
-                num_faces=1,
-                min_face_detection_confidence=0.5,
-                min_face_presence_confidence=0.5,
-                output_face_blendshapes=False,
-                output_facial_transformation_matrixes=False
-            )
-            
-            # Create FaceLandmarker
-            self._face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
+            try:
+                import os
+                if not os.path.exists(self.model_path):
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"MediaPipe model not found at {self.model_path}. "
+                        "Download it using: python download_mediapipe_model.py"
+                    )
+                    return None
+
+                # Create base options with model path
+                base_options = mp.tasks.BaseOptions(model_asset_path=self.model_path)
+                
+                # Create FaceLandmarker options
+                options = mp.tasks.vision.FaceLandmarkerOptions(
+                    base_options=base_options,
+                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                    num_faces=1,
+                    min_face_detection_confidence=0.5,
+                    min_face_presence_confidence=0.5,
+                    output_face_blendshapes=False,
+                    output_facial_transformation_matrixes=False
+                )
+                
+                # Create FaceLandmarker
+                self._face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to initialize MediaPipe FaceLandmarker: {e}")
+                return None
         
         return self._face_landmarker
     
@@ -128,6 +144,8 @@ class CVVerifier:
         
         # Compute depth score from the first frame with detected landmarks
         depth_score = 0.0
+        if self.face_landmarker is None:
+            return 0.5 * movement_score
         for frame in video_frames:
             # Preprocess frame
             rgb_frame = self.preprocess_frame(frame)
@@ -135,8 +153,11 @@ class CVVerifier:
             # Convert to MediaPipe Image
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
             
-            # Detect landmarks
-            detection_result = self.face_landmarker.detect(mp_image)
+            try:
+                # Detect landmarks
+                detection_result = self.face_landmarker.detect(mp_image)
+            except Exception:
+                continue
             
             if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
                 # Extract first face landmarks
@@ -186,27 +207,46 @@ class CVVerifier:
                 timestamp=time.time()
             )
         
-        # Extract challenge action from challenge_id
-        # Format: {session_id}_{type}_{index}_{action}
-        # where action can be multi-word like "nod_up" or single word like "smile"
-        # We need to extract everything after the third underscore
-        challenge_parts = challenge.challenge_id.split('_')
-        if len(challenge_parts) < 4:
-            # Invalid challenge ID format
-            return ChallengeResult(
-                challenge_id=challenge.challenge_id,
-                completed=False,
-                confidence=0.0,
-                timestamp=time.time()
-            )
-        
-        # Join all parts after the third underscore to get the full action
-        # e.g., "test_session_gesture_0_nod_up" -> ["test", "session", "gesture", "0", "nod", "up"]
-        # We want "nod_up", which is everything from index 4 onwards joined with "_"
-        challenge_action = '_'.join(challenge_parts[4:]) if len(challenge_parts) > 4 else challenge_parts[3]
-        
-        # Import ChallengeType from data_models
+        # Map human-readable instructions back to action keys
         from ..models.data_models import ChallengeType
+        
+        INSTRUCTION_TO_ACTION = {
+            "Nod your head up": "nod_up",
+            "Nod your head down": "nod_down",
+            "Turn your head to the left": "turn_left",
+            "Turn your head to the right": "turn_right",
+            "Tilt your head to the left": "tilt_left",
+            "Tilt your head to the right": "tilt_right",
+            "Open your mouth wide": "open_mouth",
+            "Close your eyes": "close_eyes",
+            "Raise your eyebrows": "raise_eyebrows",
+            "Blink your eyes": "blink",
+            "Smile": "smile",
+            "Frown": "frown",
+            "Look surprised": "surprised",
+            "Keep a neutral expression": "neutral",
+            "Look angry": "angry",
+        }
+        
+        challenge_action = INSTRUCTION_TO_ACTION.get(challenge.instruction)
+        if not challenge_action:
+            # Fallback: extract action from challenge_id
+            # Format: {uuid}_{gesture|expression}_{index}_{action_with_underscores}
+            # Find the type marker and extract everything after the index
+            cid = challenge.challenge_id
+            for marker in ['_gesture_', '_expression_']:
+                idx = cid.find(marker)
+                if idx != -1:
+                    after_marker = cid[idx + len(marker):]  # e.g. "0_nod_up"
+                    # Skip the index and underscore
+                    underscore = after_marker.find('_')
+                    if underscore != -1:
+                        challenge_action = after_marker[underscore + 1:]  # e.g. "nod_up"
+                    else:
+                        challenge_action = after_marker
+                    break
+            if not challenge_action:
+                challenge_action = cid.split('_')[-1]
         
         # Route to appropriate verification method based on challenge type
         if challenge.type == ChallengeType.GESTURE:
@@ -356,6 +396,8 @@ class CVVerifier:
         
         # Extract landmarks from all frames
         all_landmarks = []
+        if self.face_landmarker is None:
+            return 0.0
         for frame in frame_sequence:
             # Preprocess frame
             rgb_frame = self.preprocess_frame(frame)
@@ -363,8 +405,11 @@ class CVVerifier:
             # Convert to MediaPipe Image
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
             
-            # Detect landmarks
-            detection_result = self.face_landmarker.detect(mp_image)
+            try:
+                # Detect landmarks
+                detection_result = self.face_landmarker.detect(mp_image)
+            except Exception:
+                return 0.0
             
             if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
                 # Extract first face landmarks
@@ -498,10 +543,15 @@ class CVVerifier:
         
         # Extract landmarks from frames
         all_landmarks = []
+        if self.face_landmarker is None:
+            return False, 0.0
         for frame in video_frames:
             rgb_frame = self.preprocess_frame(frame)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            detection_result = self.face_landmarker.detect(mp_image)
+            try:
+                detection_result = self.face_landmarker.detect(mp_image)
+            except Exception:
+                return False, 0.0
             
             if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
                 landmarks = detection_result.face_landmarks[0]
@@ -541,9 +591,9 @@ class CVVerifier:
             else:  # nod_down
                 direction_correct = nose_positions[-1] > nose_positions[0]
             
-            # Threshold: significant movement (> 0.03) in correct direction
-            if avg_movement > 0.03 and direction_correct:
-                confidence = min(avg_movement / 0.1, 1.0)  # Normalize to 0-1
+            # Threshold: significant movement (> 0.015) in correct direction
+            if avg_movement > 0.015 and direction_correct:
+                confidence = min(avg_movement / 0.06, 1.0)  # Normalize to 0-1
                 return True, confidence
             else:
                 return False, avg_movement / 0.1
@@ -562,9 +612,9 @@ class CVVerifier:
             else:  # turn_right
                 direction_correct = nose_positions[-1] > nose_positions[0]
             
-            # Threshold: significant movement (> 0.05) in correct direction
-            if nose_movement > 0.05 and direction_correct:
-                confidence = min(nose_movement / 0.15, 1.0)
+            # Threshold: significant movement (> 0.025) in correct direction
+            if nose_movement > 0.025 and direction_correct:
+                confidence = min(nose_movement / 0.08, 1.0)
                 return True, confidence
             else:
                 return False, nose_movement / 0.15
@@ -591,9 +641,9 @@ class CVVerifier:
             else:  # tilt_right
                 direction_correct = eye_angles[-1] < eye_angles[0]
             
-            # Threshold: significant tilt (> 0.15 radians ≈ 8.6 degrees)
-            if angle_change > 0.15 and direction_correct:
-                confidence = min(angle_change / 0.4, 1.0)
+            # Threshold: significant tilt (> 0.08 radians ≈ 4.6 degrees)
+            if angle_change > 0.08 and direction_correct:
+                confidence = min(angle_change / 0.25, 1.0)
                 return True, confidence
             else:
                 return False, angle_change / 0.4
@@ -611,9 +661,9 @@ class CVVerifier:
             # Check if mouth opened significantly
             max_opening = max(mouth_openings)
             
-            # Threshold: mouth opening > 0.03
-            if max_opening > 0.03:
-                confidence = min(max_opening / 0.08, 1.0)
+            # Threshold: mouth opening > 0.015
+            if max_opening > 0.015:
+                confidence = min(max_opening / 0.05, 1.0)
                 return True, confidence
             else:
                 return False, max_opening / 0.08
@@ -638,9 +688,9 @@ class CVVerifier:
             # Check if eyes closed (EAR drops significantly)
             min_ear = min(ear_values)
             
-            # Threshold: EAR < 0.015 indicates closed eyes
-            if min_ear < 0.015:
-                confidence = min((0.025 - min_ear) / 0.025, 1.0)
+            # Threshold: EAR < 0.02 indicates closed eyes
+            if min_ear < 0.02:
+                confidence = min((0.03 - min_ear) / 0.03, 1.0)
                 return True, confidence
             else:
                 return False, (0.025 - min_ear) / 0.025
@@ -658,9 +708,9 @@ class CVVerifier:
             # Check if eyebrows moved up (y decreases)
             movement = eyebrow_positions[0] - min(eyebrow_positions)
             
-            # Threshold: eyebrows move up > 0.02
-            if movement > 0.02:
-                confidence = min(movement / 0.05, 1.0)
+            # Threshold: eyebrows move up > 0.01
+            if movement > 0.01:
+                confidence = min(movement / 0.03, 1.0)
                 return True, confidence
             else:
                 return False, movement / 0.05
@@ -681,8 +731,8 @@ class CVVerifier:
             ear_range = max_ear - min_ear
             
             # Check for blink pattern (significant variation)
-            if ear_range > 0.01 and min_ear < 0.02:
-                confidence = min(ear_range / 0.03, 1.0)
+            if ear_range > 0.005 and min_ear < 0.025:
+                confidence = min(ear_range / 0.02, 1.0)
                 return True, confidence
             else:
                 return False, ear_range / 0.03
@@ -712,10 +762,15 @@ class CVVerifier:
         
         # Extract landmarks from frames
         all_landmarks = []
+        if self.face_landmarker is None:
+            return False, 0.0
         for frame in video_frames:
             rgb_frame = self.preprocess_frame(frame)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            detection_result = self.face_landmarker.detect(mp_image)
+            try:
+                detection_result = self.face_landmarker.detect(mp_image)
+            except Exception:
+                return False, 0.0
             
             if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
                 landmarks = detection_result.face_landmarks[0]
@@ -755,8 +810,8 @@ class CVVerifier:
             # This creates the upward curve of a smile
             smile_indicator = mouth_center_y - upper_lip_y
             
-            # Threshold: smile indicator > 0.01 and mouth width > 0.18
-            if smile_indicator > 0.01 and mouth_width > 0.18:
+            # Threshold: smile indicator > 0.005 and mouth width > 0.12
+            if smile_indicator > 0.005 and mouth_width > 0.12:
                 confidence = min(smile_indicator / 0.05, 1.0)
                 return True, confidence
             else:
@@ -791,7 +846,7 @@ class CVVerifier:
             mouth_opening = abs(landmarks[LOWER_LIP][1] - landmarks[UPPER_LIP][1])
             
             # Surprised: both eyes and mouth open wide
-            if avg_eye_opening > 0.025 and mouth_opening > 0.03:
+            if avg_eye_opening > 0.018 and mouth_opening > 0.02:
                 confidence = min((avg_eye_opening + mouth_opening) / 0.08, 1.0)
                 return True, confidence
             else:
@@ -802,8 +857,8 @@ class CVVerifier:
             # Check that mouth and eyes are in neutral position
             mouth_opening = abs(landmarks[LOWER_LIP][1] - landmarks[UPPER_LIP][1])
             
-            # Neutral: small mouth opening (0.01-0.025)
-            if 0.01 <= mouth_opening <= 0.025:
+            # Neutral: small mouth opening (0.005-0.03)
+            if 0.005 <= mouth_opening <= 0.03:
                 confidence = 0.8  # High confidence for neutral
                 return True, confidence
             else:

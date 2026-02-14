@@ -135,24 +135,25 @@ export default function VerifyGlassPage() {
     console.log('Received message:', message.type, message)
 
     switch (message.type) {
-      case 'CHALLENGE_ISSUED':
+      case 'challenge_issued':
         setCurrentChallenge(message.data?.instruction || message.message)
         break
 
-      case 'CHALLENGE_COMPLETED':
+      case 'challenge_completed': {
         const completed = message.data?.completed_count || completedChallenges + 1
         setCompletedChallenges(completed)
         const total = message.data?.total_challenges || totalChallenges
         setTotalChallenges(total)
         setProgress((completed / total) * 100)
         break
+      }
 
-      case 'CHALLENGE_FAILED':
+      case 'challenge_failed':
         // Challenge failed, but continue with verification
         console.log('Challenge failed:', message.message)
         break
 
-      case 'SCORE_UPDATE':
+      case 'score_update':
         setScores({
           liveness: message.data?.liveness_score || 0,
           emotion: message.data?.emotion_score || 0,
@@ -160,7 +161,7 @@ export default function VerifyGlassPage() {
         })
         break
 
-      case 'VERIFICATION_SUCCESS':
+      case 'verification_success':
         setStep('success')
         setToken(message.data?.token || null)
         setFinalScore(message.data?.final_score || 0)
@@ -169,14 +170,14 @@ export default function VerifyGlassPage() {
         cleanup()
         break
 
-      case 'VERIFICATION_FAILED':
+      case 'verification_failed':
         setStep('error')
         setErrorMessage(message.data?.reason || message.message || 'Verification failed. Please try again.')
         setFinalScore(message.data?.final_score || 0)
         cleanup()
         break
 
-      case 'ERROR':
+      case 'error':
         setStep('error')
         setErrorMessage(message.message || 'An error occurred during verification.')
         cleanup()

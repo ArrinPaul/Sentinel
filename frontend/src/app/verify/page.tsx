@@ -38,10 +38,10 @@ function VerificationContent() {
 
     if (data.type === 'challenge_issued') {
       const challenge: Challenge = {
-        challengeId: data.challenge_id,
-        type: data.challenge_type,
-        instruction: data.instruction,
-        timeoutSeconds: data.timeout || 10
+        challengeId: data.data?.challenge_id || '',
+        type: data.data?.type || 'gesture',
+        instruction: data.data?.instruction || data.message || '',
+        timeoutSeconds: data.data?.timeout_seconds || 10
       }
       updateChallenge(challenge)
       setTimeRemaining(challenge.timeoutSeconds)
@@ -55,7 +55,7 @@ function VerificationContent() {
       addFeedback({
         type: 'challenge_completed',
         message: 'Challenge completed successfully!',
-        data: { score: data.score }
+        data: { score: data.data?.confidence }
       })
     } else if (data.type === 'challenge_failed') {
       addFeedback({
@@ -63,30 +63,31 @@ function VerificationContent() {
         message: data.message || 'Challenge failed',
       })
     } else if (data.type === 'score_update') {
-      updateScore(data.score)
+      const score = data.data?.liveness_score || 0
+      updateScore(score)
       addFeedback({
         type: 'score_update',
-        message: `Score updated: ${(data.score * 100).toFixed(0)}%`,
-        data: { score: data.score }
+        message: `Score updated: ${(score * 100).toFixed(0)}%`,
+        data: { score }
       })
     } else if (data.type === 'verification_success') {
       updateStatus('completed')
       setToken({
-        token: data.token,
-        expiresAt: data.expires_at,
-        finalScore: data.final_score
+        token: data.data?.token,
+        expiresAt: data.data?.expires_at,
+        finalScore: data.data?.final_score
       })
       addFeedback({
         type: 'verification_success',
         message: 'Verification successful! You are authenticated.',
-        data: { finalScore: data.final_score, passed: true }
+        data: { finalScore: data.data?.final_score, passed: true }
       })
     } else if (data.type === 'verification_failed') {
       updateStatus('failed')
       addFeedback({
         type: 'verification_failed',
         message: data.message || 'Verification failed. Please try again.',
-        data: { finalScore: data.final_score, passed: false }
+        data: { finalScore: data.data?.final_score, passed: false }
       })
     } else if (data.type === 'error') {
       setError(data.message)
