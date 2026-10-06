@@ -1,570 +1,252 @@
-# SENTINEL — Proof-of-Life Biometric Authentication System
+<div align="center">
 
-> Real-time biometric identity verification using ML-powered liveness detection, deepfake analysis, emotion recognition, and a tamper-proof blockchain ledger — all in one system.
+# Sentinel
+
+### Proof-of-life authentication: are you a live person, right now?
+
+_A short webcam challenge checks for a real, present face, and a signed result and a tamper-evident log record the outcome._
+
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![MediaPipe](https://img.shields.io/badge/MediaPipe-face_landmarks-0097A7)
+![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?logo=opencv&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=nextdotjs&logoColor=white)
+![Clerk](https://img.shields.io/badge/Clerk-auth-6C47FF?logo=clerk&logoColor=white)
+![Pytest](https://img.shields.io/badge/Pytest-Hypothesis-0A9EDC?logo=pytest&logoColor=white)
+
+[Quickstart](#quickstart) · [How it works](#how-it-works) · [Methodology](./METHODOLOGY.md) · [Security](#security) · [Project status](#project-status) · [Report an issue](https://github.com/ArrinPaul/Sentinel/issues)
+
+</div>
 
 ---
+
+## About
+
+Passwords and one-time codes prove that someone knows a secret. Sentinel asks a different question: is a live human in front of the camera right now, not a photo, a replayed video or a deepfake?
+
+After signing in, the user is given a short, random set of challenges (for example "turn your head left", "smile", "blink"). The browser streams webcam frames to a FastAPI backend over a WebSocket. The backend checks that each challenge was done, measures how "alive" the face looks (3D depth cues and natural micro-movements), looks for signs of synthetic video and scores how natural the expressions are. If the combined score reaches the pass mark, it issues a short-lived signed token and writes the result into a signed, hash-chained log that anyone can verify.
+
+**Who it's for:** developers and students exploring liveness detection, anti-spoofing and tamper-evident audit logs.
+
+> **Read [Project status](#project-status) first.** As published, the backend does not start from a fresh clone because one Python package was never committed. This is a research prototype and must not be used to protect anything real.
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [How It Works](#how-it-works)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Getting Started](#getting-started)
-- [Environment Variables](#environment-variables)
-- [Project Structure](#project-structure)
-- [Verification Flow](#verification-flow)
-- [ML Pipeline](#ml-pipeline)
-- [Scoring Algorithm](#scoring-algorithm)
-- [Blockchain Ledger](#blockchain-ledger)
-- [API Reference](#api-reference)
-- [WebSocket Protocol](#websocket-protocol)
-- [Security](#security)
-- [Testing](#testing)
-- [Author](#author)
-- [License](#license)
+1. [About](#about)
+2. [Features](#features)
+3. [How it works](#how-it-works)
+4. [Quickstart](#quickstart)
+5. [Configuration](#configuration)
+6. [API overview](#api-overview)
+7. [Tech stack](#tech-stack)
+8. [Project structure](#project-structure)
+9. [Security](#security)
+10. [Testing](#testing)
+11. [Project status](#project-status)
+12. [Troubleshooting](#troubleshooting)
+13. [Documentation](#documentation)
+14. [Contributing](#contributing)
+15. [License](#license)
 
----
+## Features
 
-## Overview
+| Area | What it does |
+| :--- | :--- |
+| **Random challenges** | 3 challenges per session, each a gesture (10 types, such as nod, turn, tilt, open mouth, blink) or an expression (5 types), chosen with a cryptographic random generator and tied to a one-time nonce |
+| **Liveness check** | Scores 3D facial depth cues and natural micro-movements (blinks, tiny head motion, landmark jitter) from MediaPipe face landmarks |
+| **Deepfake check** | A small neural network (MesoNet-style) if a model file is present, otherwise classic image analysis (frequency patterns, warping, color and edge consistency) |
+| **Emotion check** | Scores how natural the expressions and transitions are, using DeepFace if installed |
+| **Weighted decision** | Liveness 40%, deepfake 25% and emotion 35%, with a pass mark of 0.65 |
+| **Signed token** | On success, an RS256 token valid for 15 minutes |
+| **Audit ledger** | A hash chain of verification events, each block signed with RSA, with endpoints to inspect and verify it |
+| **Sessions and limits** | A 120-second session limit and a limit of 3 consecutive failures |
+| **Web app** | Next.js front end with Clerk sign-in, a verification screen, a ledger explorer and a profile page |
 
-SENTINEL is a full-stack biometric authentication platform that verifies a user is a real, present human — not a photo, video replay, or deepfake. It combines three independent ML signals (liveness, deepfake detection, emotion analysis) into a single trust score, records every verification on an immutable blockchain ledger, and issues short-lived JWT tokens on success.
+## How it works
 
-**Key capabilities:**
-
-- **Liveness detection** — MediaPipe FaceLandmarker tracks 478 face landmarks in real time to verify physical head movements and expressions
-- **Deepfake detection** — MesoNet-4 CNN analyzes mesoscopic facial features to catch synthetic media
-- **Emotion recognition** — DeepFace validates the user can produce requested emotional expressions on demand
-- **Blockchain audit trail** — SHA-256 hash chain with RSA-PSS digital signatures creates a tamper-proof verification record
-- **Unique blockchain IDs** — Each successful verification produces a `SNTL-XXXXXXXX-XXXX` identifier
-- **Time-bound tokens** — RS256-signed JWT tokens expire after exactly 15 minutes
-
----
-
-## How It Works
-
-1. User authenticates via Clerk (social/email sign-in)
-2. User navigates to `/verify-glass` and grants camera access
-3. Backend generates a random sequence of 8 challenges (head movements + facial expressions)
-4. Frontend captures video frames at 10 FPS and streams them to the backend via WebSocket
-5. Backend ML pipeline analyzes each frame for liveness, deepfake indicators, and emotion
-6. User must pass at least 75% of challenges (6 out of 8)
-7. Scoring engine computes a weighted composite score
-8. If score ≥ 0.65, the verification passes:
-   - A block is appended to the blockchain ledger
-   - A unique `SNTL-XXXXXXXX-XXXX` blockchain ID is generated
-   - A 15-minute JWT token is issued
-9. Results are displayed with animated score breakdowns and blockchain ID
-
----
-
-## Architecture
-
-```
-┌──────────────────────┐         WebSocket (10 FPS)        ┌──────────────────────┐
-│                      │◄─────────────────────────────────►│                      │
-│   Frontend           │         REST API                  │   Backend            │
-│   Next.js 14         │◄─────────────────────────────────►│   FastAPI            │
-│   React 18           │                                    │   Python 3.11        │
-│   Tailwind + Motion  │                                    │                      │
-└──────────┬───────────┘                                    └──────────┬───────────┘
-           │                                                           │
-           ▼                                                           ▼
-┌──────────────────────┐                                    ┌──────────────────────┐
-│   Clerk              │                                    │   ML Pipeline        │
-│   Authentication     │                                    │   ├─ MediaPipe       │
-│   (JWT + JWKS)       │                                    │   ├─ MesoNet-4       │
-└──────────────────────┘                                    │   └─ DeepFace        │
-                                                            └──────────┬───────────┘
-                                                                       │
-                                                            ┌──────────▼───────────┐
-                                                            │   Blockchain Ledger  │
-                                                            │   SHA-256 + RSA-PSS  │
-                                                            │   JSON persistence   │
-                                                            └──────────────────────┘
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant W as Web app (Next.js)
+    participant B as Backend (FastAPI)
+    participant ML as Face analysis
+    participant L as Ledger
+    U->>W: Sign in (Clerk)
+    W->>B: POST /api/auth/verify
+    B-->>W: session id + WebSocket URL
+    W->>B: open /ws/verify/{session}
+    B-->>W: challenge sequence + nonce
+    loop each challenge
+        W->>B: camera frames
+        B->>ML: was it performed?
+        B-->>W: pass or fail feedback
+    end
+    B->>ML: liveness + emotion + deepfake on the whole clip
+    B->>B: weighted score, pass if 0.65 or more
+    B->>L: add signed block
+    B-->>W: result + 15-minute RS256 token
 ```
 
----
+The formulas, thresholds and fallbacks are in [METHODOLOGY.md](./METHODOLOGY.md).
 
-## Tech Stack
+## Quickstart
 
-| Layer       | Technology                                                     |
-| ----------- | -------------------------------------------------------------- |
-| Frontend    | Next.js 14, React 18, TypeScript, Tailwind CSS, Framer Motion |
-| Auth        | Clerk (JWKS verification, social + email providers)            |
-| Backend     | FastAPI, Python 3.11, Uvicorn                                  |
-| ML/CV       | MediaPipe FaceLandmarker, MesoNet-4 (CNN), DeepFace           |
-| Crypto      | PyJWT (RS256), `cryptography` (RSA-PSS, SHA-256)              |
-| Transport   | WebSocket (real-time), REST (API)                              |
-| Storage     | In-memory sessions, JSON blockchain persistence                |
-| Testing     | Vitest + Testing Library (frontend), pytest (backend)          |
+> The backend currently needs a file that is missing from the repository (see [Project status](#project-status)). The steps below show how it is meant to run.
 
----
-
-## Getting Started
-
-### Prerequisites
-
-- **Python 3.11+** with `pip`
-- **Node.js 18+** with `npm`
-- A webcam (required for verification)
-- A [Clerk](https://clerk.com) account (free tier works)
-
-### 1. Clone the repository
+Prerequisites: Python 3.11, Node.js 18+, a webcam, and a free [Clerk](https://clerk.com) application (optional for local development).
 
 ```bash
-git clone https://github.com/ArrinPaul/TechX.git
-cd TechX
+git clone https://github.com/ArrinPaul/Sentinel.git
+cd Sentinel
 ```
 
-### 2. Backend setup
+**Backend**
 
 ```bash
 cd backend
-
-# Create and activate virtual environment
-python -m venv venv311
-# Windows:
-venv311\Scripts\activate
-# macOS/Linux:
-source venv311/bin/activate
-
-# Install dependencies
+python -m venv venv
+venv\Scripts\activate              # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
-
-# Download the MediaPipe face landmarker model
-python download_mediapipe_model.py
-
-# Create .env (see Environment Variables section below)
-
-# Start the server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python download_mediapipe_model.py # downloads the face landmark model
+cp .env.example .env               # then edit it (see Configuration)
+uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Frontend setup
+Do not use the committed `backend/venv311/` folder. It is a Windows virtual environment that was added to the repository by mistake and will not work on your machine.
+
+**Frontend**
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Create .env.local (see Environment Variables section below)
-
-# Start the dev server
-npm run dev
+cp .env.local.example .env.local   # add your Clerk keys and API URLs
+npm run dev                        # http://localhost:3000
 ```
 
-### 4. Quick start (Windows)
+Optional: `python download_deepfake_model.py` fetches a deepfake model, and `pip install deepface` enables the emotion check (see [Methodology](./METHODOLOGY.md) for what happens without them).
 
-```bash
-# From the root directory — starts both servers
-start-local.bat
-```
+`start-local.bat` starts both servers on Windows, but it activates the committed `venv311` folder, so edit it to use your own virtual environment.
 
-### 5. Open in browser
+## Configuration
 
-| URL                                  | Description              |
-| ------------------------------------ | ------------------------ |
-| http://localhost:3000                 | Landing page             |
-| http://localhost:3000/verify-glass    | Verification scanner     |
-| http://localhost:3000/blockchain      | Blockchain ledger viewer |
-| http://localhost:3000/profile         | User profile             |
-| http://localhost:8000                 | Backend root             |
-| http://localhost:8000/docs            | Interactive API docs     |
-| http://localhost:8000/health          | Health check             |
+**Backend (`backend/.env`)**
 
----
+| Variable | Purpose |
+| :--- | :--- |
+| `CLERK_ISSUER_URL` | Your Clerk issuer. If empty, token checks are skipped (development only). |
+| `MEDIAPIPE_MODEL_PATH` | Face landmark model file. If unset, `~/.mediapipe_models/face_landmarker.task` is tried. |
+| `DEEPFAKE_MODEL_PATH` | Optional deepfake model file. Without it, the image-analysis fallback is used. |
+| `CORS_ORIGINS` | Allowed web origins, comma separated (default `http://localhost:3000`) |
+| `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY` | PEM text of the RSA key pair used for tokens and ledger blocks. If unset, a pair is generated at start-up. |
+| `USE_WSS`, `WEBSOCKET_HOST` | Protocol and host put in the WebSocket URL sent to the browser |
 
-## Environment Variables
+`backend/.env.example` also lists `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `JWT_EXPIRY_MINUTES`, `SESSION_TIMEOUT_SECONDS`, `MAX_FAILED_ATTEMPTS`, `HOST` and `PORT`. The running app does not read these. The limits are fixed in code (a 120-second session and 3 consecutive failures, and tokens that last 15 minutes). Start the server with `uvicorn ... --host --port` instead of `HOST` and `PORT`.
 
-### Backend — `backend/.env`
+**Frontend (`frontend/.env.local`)**
 
-```bash
-# Clerk JWT validation (leave empty to skip in dev)
-CLERK_ISSUER_URL=
+| Variable | Purpose |
+| :--- | :--- |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Clerk keys |
+| `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL` | Backend HTTP and WebSocket addresses |
 
-# MediaPipe model location
-MEDIAPIPE_MODEL_PATH=~/.mediapipe_models/face_landmarker.task
+Never commit `.env` files.
 
-# CORS — comma-separated origins
-CORS_ORIGINS=http://localhost:3000
+## API overview
 
-# JWT token settings
-JWT_EXPIRY_MINUTES=15
-JWT_PRIVATE_KEY=          # Auto-generated if empty
-JWT_PUBLIC_KEY=           # Auto-generated if empty
+| Method and path | Purpose |
+| :--- | :--- |
+| `GET /health` | Liveness check |
+| `POST /api/auth/verify` | Start a verification session (needs a Clerk token when `CLERK_ISSUER_URL` is set) |
+| `WS /ws/verify/{session_id}` | Challenge and frame streaming |
+| `POST /api/token/validate` | Check a token issued after a successful verification |
+| `GET /api/blockchain/stats`, `chain`, `block/{n}`, `verify`, `verify/{n}`, `proof/{n}`, `session/{id}`, `public-key`, `lookup/{id}` | Inspect and verify the audit ledger |
 
-# Deepfake detection (requires TensorFlow)
-ENABLE_DEEPFAKE_DETECTION=false
-DEEPFAKE_MODEL_PATH=
+## Tech stack
 
-# Session limits
-MAX_SESSION_DURATION_SECONDS=120
-MAX_CONSECUTIVE_FAILURES=3
-CHALLENGE_TIMEOUT_SECONDS=10
-```
+| Layer | Technology |
+| :--- | :--- |
+| Backend | Python 3.11, FastAPI, Uvicorn, WebSockets. Sessions and audit logs are held in memory, and the ledger is saved to a JSON file. |
+| Vision | MediaPipe face landmarker, OpenCV, NumPy, optional TensorFlow (deepfake model) and DeepFace (emotion) |
+| Crypto | PyJWT and `cryptography` (RS256 tokens, RSA-signed ledger blocks) |
+| Frontend | Next.js 14, React 18, TypeScript, Tailwind CSS, Framer Motion, Clerk |
+| Testing | Pytest, Hypothesis, Vitest, fast-check |
 
-### Frontend — `frontend/.env.local`
+## Project structure
 
-```bash
-# Backend connection
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_WS_URL=ws://localhost:8000
-
-# Clerk authentication — get keys from https://dashboard.clerk.com
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
-CLERK_SECRET_KEY=
-```
-
-> **Security note:** Both `.env` and `.env.local` are in `.gitignore`. Never commit real keys.
-
----
-
-## Project Structure
-
-```
-TechX/
-├── frontend/                          # Next.js 14 application
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx               # Landing page
-│   │   │   ├── layout.tsx             # Root layout + Clerk provider
-│   │   │   ├── globals.css            # Tailwind + custom styles
-│   │   │   ├── verify-glass/          # Main verification page
-│   │   │   │   └── page.tsx           # Scanner UI + WebSocket client + result screens
-│   │   │   ├── blockchain/            # Blockchain ledger explorer
-│   │   │   │   └── page.tsx           # Chain viewer with block details
-│   │   │   ├── profile/               # User profile page
-│   │   │   ├── sign-in/               # Clerk sign-in
-│   │   │   └── sign-up/               # Clerk sign-up
-│   │   ├── components/
-│   │   │   ├── FaceIDScanner.tsx      # Animated face mesh wireframe with HUD
-│   │   │   └── GlassCard.tsx          # Glassmorphism card component
-│   │   ├── lib/
-│   │   │   ├── api.ts                 # REST API client
-│   │   │   ├── camera.ts              # Camera capture utilities
-│   │   │   └── websocket.ts           # WebSocket connection manager
-│   │   ├── middleware.ts              # Clerk auth middleware + public routes
-│   │   ├── types/                     # TypeScript type definitions
-│   │   └── test/                      # Frontend test suite
-│   ├── package.json
-│   ├── tailwind.config.js
-│   ├── tsconfig.json
-│   └── vitest.config.ts
-│
-├── backend/                           # FastAPI application
+```text
+Sentinel/
+├── backend/
 │   ├── app/
-│   │   ├── main.py                    # FastAPI app, all routes, WebSocket handler
-│   │   ├── config.py                  # Environment-based configuration
-│   │   ├── models/
-│   │   │   └── data_models.py         # Pydantic models + dataclasses
-│   │   └── services/
-│   │       ├── blockchain_ledger.py   # SHA-256 hash chain + RSA-PSS signatures
-│   │       ├── challenge_engine.py    # Random challenge generation + anti-replay
-│   │       ├── cv_verifier.py         # MediaPipe face landmark detection
-│   │       ├── deepfake_detector.py   # MesoNet-4 CNN deepfake analysis
-│   │       ├── emotion_analyzer.py    # DeepFace emotion recognition
-│   │       ├── scoring_engine.py      # Weighted composite scoring
-│   │       ├── session_manager.py     # Session lifecycle management
-│   │       ├── token_issuer.py        # RS256 JWT token generation
-│   │       └── database_service.py    # In-memory data store + nonce tracking
-│   ├── tests/                         # pytest test suite
-│   ├── data/                          # Blockchain ledger JSON files
-│   │   ├── verification_ledger.json   # Block chain data
-│   │   └── ledger_keys.json           # RSA key pair (auto-generated)
-│   ├── requirements.txt               # Python dependencies
-│   └── pytest.ini                     # Test configuration
-│
-├── start-local.bat                    # Windows quick-start script
-└── README.md                          # This file
+│   │   ├── main.py             FastAPI app, WebSocket flow, ledger endpoints
+│   │   ├── config.py           Settings
+│   │   └── services/           challenge_engine, cv_verifier, deepfake_detector,
+│   │                           emotion_analyzer, scoring_engine, token_issuer,
+│   │                           blockchain_ledger, session_manager, database_service
+│   ├── tests/                  Unit, property-based and integration tests
+│   ├── download_*_model.py     Model download helpers
+│   └── venv311/                A committed virtual environment (should not be in git)
+├── frontend/                   Next.js app, camera and WebSocket libraries, tests
+├── start-local.bat             Windows launcher
+├── METHODOLOGY.md
+└── LICENSE
 ```
-
----
-
-## Verification Flow
-
-```
-User clicks "Begin Verification"
-         │
-         ▼
-┌─────────────────────────────────┐
-│ POST /api/auth/verify           │  Creates session + generates 8 challenges
-│ ← session_id, challenges[]     │  (random mix of gestures + expressions)
-└────────────────┬────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────┐
-│ WS /ws/verify/{session_id}     │  Frontend opens WebSocket
-│                                 │
-│   For each challenge:           │
-│   1. Display instruction        │  "Turn your head left", "Smile", etc.
-│   2. Stream frames (10 FPS)     │  Base64 JPEG → backend
-│   3. ML analysis per frame      │  Liveness + deepfake + emotion
-│   4. Return pass/fail + scores  │  Real-time feedback to UI
-└────────────────┬────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────┐
-│ Challenge pass rate check       │  Must pass ≥ 75% (6 of 8)
-│                                 │
-│ Scoring engine computes:        │
-│   0.4×liveness + 0.25×deepfake  │
-│   + 0.35×emotion                │
-│                                 │
-│ Threshold: ≥ 0.65 to pass      │
-└────────────────┬────────────────┘
-                 │
-          ┌──────┴──────┐
-          │             │
-       PASS           FAIL
-          │             │
-          ▼             ▼
-  ┌──────────────┐  ┌──────────────┐
-  │ Blockchain   │  │ Failure      │
-  │ block added  │  │ recorded     │
-  │ SNTL ID      │  │              │
-  │ issued       │  │ "Try again"  │
-  │ JWT token    │  │ screen       │
-  │ generated    │  └──────────────┘
-  └──────────────┘
-```
-
----
-
-## ML Pipeline
-
-### 1. Liveness Detection — MediaPipe FaceLandmarker
-
-- Tracks **478 face landmarks** in real time
-- Detects head pose (yaw, pitch, roll) to verify gestures like nodding, turning, tilting
-- Verifies physical presence — photos and static images fail movement challenges
-- Model: `face_landmarker.task` (~4MB, downloaded to `~/.mediapipe_models/`)
-
-### 2. Deepfake Detection — MesoNet-4
-
-- 4-layer CNN designed to capture mesoscopic artifacts in synthetic faces
-- Analyzes facial textures at a level between pixel-level and semantic-level
-- Detects GAN-generated and face-swapped content
-- Optional — requires TensorFlow (`ENABLE_DEEPFAKE_DETECTION=true`)
-
-### 3. Emotion Recognition — DeepFace
-
-- Analyzes 7 emotions: happy, sad, angry, surprise, fear, disgust, neutral
-- Validates the user can produce a specific expression on demand
-- Expression pools: `smile`, `frown`, `surprised`, `neutral`, `angry`
-- A pre-recorded video cannot dynamically respond to random expression requests
-
-### Challenge Types
-
-| Type       | Pool Size | Examples                                                         |
-| ---------- | --------- | ---------------------------------------------------------------- |
-| Gestures   | 10        | Nod up/down, turn left/right, tilt left/right, blink, open mouth |
-| Expressions| 5         | Smile, frown, surprised, neutral, angry                          |
-
-Each session generates **8 random challenges** from both pools using `secrets.choice()`.
-
----
-
-## Scoring Algorithm
-
-The scoring engine combines three independent ML signals into a single trust score using a weighted formula:
-
-$$\text{final\_score} = 0.4 \times \text{liveness} + 0.25 \times \text{deepfake} + 0.35 \times \text{emotion}$$
-
-| Component | Weight | Source                    | Measures                       |
-| --------- | ------ | ------------------------- | ------------------------------ |
-| Liveness  | 40%    | MediaPipe FaceLandmarker  | Physical presence, head motion |
-| Deepfake  | 25%    | MesoNet-4 CNN             | Synthetic media artifacts      |
-| Emotion   | 35%    | DeepFace                  | Voluntary expression control   |
-
-**Pass criteria:**
-- Final score ≥ **0.65** (65%)
-- Challenge pass rate ≥ **75%** (6 of 8 challenges)
-
-Both conditions must be met for verification to succeed.
-
----
-
-## Blockchain Ledger
-
-Every verification (pass or fail) is recorded as a block on an immutable hash chain.
-
-### Block Structure
-
-```json
-{
-  "index": 3,
-  "timestamp": 1718234567.89,
-  "block_id": "uuid-v4",
-  "previous_hash": "sha256-of-previous-block",
-  "data": {
-    "session_id": "...",
-    "user_id": "...",
-    "blockchain_id": "SNTL-A3F7B2C1-9D4E",
-    "final_score": 0.82,
-    "passed": true,
-    "liveness_score": 0.91,
-    "deepfake_score": 0.75,
-    "emotion_score": 0.78,
-    "challenges_passed": 7,
-    "challenges_total": 8
-  },
-  "nonce": "cryptographic-nonce",
-  "block_hash": "sha256-of-this-block",
-  "signature": "rsa-pss-signature-base64"
-}
-```
-
-### Properties
-
-- **Immutability** — Each block's hash includes the previous block's hash. Modifying any block breaks the chain.
-- **Digital signatures** — Every block is signed with the server's RSA private key (RSA-PSS, SHA-256).
-- **Independent verification** — Anyone with the public key (`GET /api/blockchain/public-key`) can verify any block's signature.
-- **SNTL IDs** — Successful verifications generate a unique `SNTL-XXXXXXXX-XXXX` blockchain ID.
-- **Persistence** — Chain is stored as JSON in `backend/data/verification_ledger.json`.
-
----
-
-## API Reference
-
-### REST Endpoints
-
-| Method | Path                                | Description                            |
-| ------ | ----------------------------------- | -------------------------------------- |
-| `GET`  | `/`                                 | API info                               |
-| `GET`  | `/health`                           | Health check + service status          |
-| `POST` | `/api/auth/verify`                  | Create verification session            |
-| `POST` | `/api/token/validate`               | Validate an issued JWT token           |
-| `GET`  | `/api/blockchain/stats`             | Chain statistics (total blocks, etc.)  |
-| `GET`  | `/api/blockchain/chain`             | List all blocks                        |
-| `GET`  | `/api/blockchain/block/{index}`     | Get specific block by index            |
-| `GET`  | `/api/blockchain/verify`            | Verify entire chain integrity          |
-| `GET`  | `/api/blockchain/verify/{index}`    | Verify specific block                  |
-| `GET`  | `/api/blockchain/proof/{index}`     | Get cryptographic proof for block      |
-| `GET`  | `/api/blockchain/session/{id}`      | Look up blocks by session ID           |
-| `GET`  | `/api/blockchain/lookup/{sntl_id}`  | Look up block by SNTL blockchain ID    |
-| `GET`  | `/api/blockchain/public-key`        | Export RSA public key (PEM)            |
-
-### Health Check Response
-
-```json
-{
-  "status": "healthy",
-  "services": {
-    "api": "operational",
-    "database": "operational",
-    "blockchain_ledger": "operational"
-  },
-  "blockchain": {
-    "total_blocks": 3
-  }
-}
-```
-
----
-
-## WebSocket Protocol
-
-**Endpoint:** `ws://localhost:8000/ws/verify/{session_id}`
-
-### Client → Server
-
-```json
-{
-  "type": "frame",
-  "data": "base64-encoded-jpeg",
-  "challenge_index": 0
-}
-```
-
-### Server → Client
-
-```json
-{
-  "type": "challenge_result",
-  "challenge_index": 0,
-  "passed": true,
-  "liveness_score": 0.92,
-  "deepfake_score": 0.88,
-  "emotion_score": 0.85,
-  "feedback": "Challenge passed!"
-}
-```
-
-### Final Result
-
-```json
-{
-  "type": "verification_complete",
-  "passed": true,
-  "final_score": 0.82,
-  "blockchain_id": "SNTL-A3F7B2C1-9D4E",
-  "token": "eyJhbGciOiJSUzI1NiIs...",
-  "scores": {
-    "liveness": 0.91,
-    "deepfake": 0.75,
-    "emotion": 0.78
-  }
-}
-```
-
----
 
 ## Security
 
-| Measure                     | Implementation                                                    |
-| --------------------------- | ----------------------------------------------------------------- |
-| Authentication              | Clerk JWT with JWKS verification                                  |
-| Anti-replay                 | Cryptographic nonces (`secrets.token_hex(16)`) per session        |
-| Challenge randomness        | `secrets.choice()` — cryptographically secure PRNG                |
-| Token signing               | RS256 (RSA 2048-bit) with 15-minute expiry                        |
-| Blockchain signatures       | RSA-PSS with SHA-256                                              |
-| CORS                        | Configurable origins, locked to `localhost:3000` by default       |
-| Session limits              | 120-second max duration, 3 max consecutive failures               |
-| No credential storage       | `.env` / `.env.local` are gitignored, no keys in source control   |
+What is implemented:
 
----
+- Challenges use `secrets` for randomness and carry a 32-character nonce.
+- Tokens are RS256, expire after 15 minutes and are checked for signature and expiry.
+- Each ledger block stores the hash of the previous block and an RSA signature, so tampering is detectable.
+- Clerk tokens are verified against Clerk's published keys when `CLERK_ISSUER_URL` is set.
+
+Known gaps:
+
+- **Auth is optional.** With `CLERK_ISSUER_URL` unset, anyone can start a session for any user ID.
+- **Token keys are regenerated at every start** unless you set `JWT_PRIVATE_KEY` and `JWT_PUBLIC_KEY`, so tokens issued before a restart no longer validate. The ledger keeps its own key in `backend/data/ledger_keys.json` as plain JSON, unless you pass the same environment keys.
+- **Sessions, nonces and audit logs live in memory** and are lost on restart. Only the ledger is saved to disk (`backend/data/`).
+- **The "emotion" factor is a constant when DeepFace is not installed**, and DeepFace is not in `requirements.txt` (see below).
+- **The ledger is a single-node log**, not a distributed blockchain. The operator can rewrite it.
+- **The ledger endpoints need no login.** `GET /api/blockchain/chain` and its siblings return every block, including user IDs and scores, to anyone who can reach the server.
+- **The anti-spoofing is untested against real attacks.** It has not been evaluated against photos, screen replays, masks or modern deepfakes.
+- **Thresholds are hand-tuned** and several were lowered to make real users pass more easily (see the comments in `cv_verifier.py`).
 
 ## Testing
 
-### Backend
+The repository has about 15 backend test modules (unit, Hypothesis property tests, integration and WebSocket tests) and Vitest tests for the front end. **I could not run the backend tests**, because they import the missing `app.models` package. Run `pytest` from `backend/` and `npm test` from `frontend/` once that package is restored. There is no CI.
 
-```bash
-cd backend
-venv311\Scripts\activate
-pytest                      # Run full test suite
-pytest -v                   # Verbose output
-pytest tests/test_scoring_engine.py  # Run specific test file
-```
+## Project status
 
-### Frontend
+- **The backend does not run from a clone.** `backend/app/models/data_models.py` (imported by `main.py` and most services) is not in the repository. The line `models/` in `backend/.gitignore`, which was meant to ignore ML model files, also matches the `backend/app/models/` package, so it was never committed. Fix: the line in `backend/.gitignore` is now `/models/`, so the package is no longer ignored. The `backend/app/models/` folder itself still has to be committed from the machine where it exists.
+- **A virtual environment (`backend/venv311/`, about 44 files) is committed.** It should be deleted from git and ignored.
+- **`backend/app/config.py` is not used.** `main.py` reads environment variables itself, and the file refers to a `setup.py` for key generation that does not exist. Many settings in `.env.example` are therefore ignored.
+- **`deepface` and `tensorflow` are not in `requirements.txt`.** Without DeepFace the emotion score is fixed at 0.70. The deepfake model is optional too.
+- **No CI and no evaluation** of accuracy, false accepts or false rejects.
+- **Research prototype.** Do not use it for real access control.
 
-```bash
-cd frontend
-npm test                    # Run Vitest
-npm run test:ui             # Vitest with browser UI
-```
+## Troubleshooting
 
-### Test coverage includes:
+| Symptom | Likely cause | Fix |
+| :--- | :--- | :--- |
+| `ModuleNotFoundError: No module named 'app.models'` | The package is missing from the repository | See [Project status](#project-status). |
+| "Face landmarker model not found" | The MediaPipe model was not downloaded | Run `python download_mediapipe_model.py`. |
+| Verification always fails the liveness part | Poor lighting, face too small or off-centre, or a very still face | Sit close, face the light and do each challenge clearly. |
+| Clerk "401" errors | Wrong issuer URL or keys | Check `CLERK_ISSUER_URL` and the frontend keys. |
+| Tokens stop validating after a restart | A new key pair was generated | Set `JWT_PRIVATE_KEY` and `JWT_PUBLIC_KEY`. |
+| Camera does not start | Browser permission or an insecure origin | Allow the camera, and use `localhost` or HTTPS. |
 
-- Scoring engine (weighted formula, threshold, edge cases)
-- Challenge engine (randomness, nonce generation, pool sizes)
-- Session manager (lifecycle, timeouts, failure limits)
-- Token issuer (RS256 signing, validation, expiry)
-- Blockchain ledger (hash chain integrity, signatures, SNTL IDs)
-- Database service (CRUD, nonce tracking)
-- Deepfake detector (model loading, inference)
-- Emotion analyzer (expression detection)
-- CV verifier (face landmark detection)
-- Integration tests (end-to-end verification flow)
+## Documentation
 
----
+| Document | Purpose |
+| :--- | :--- |
+| [METHODOLOGY.md](METHODOLOGY.md) | Scoring formula, liveness cues, challenge design, fallbacks, ledger and token details |
 
-## Author
+## Contributing
 
-**Arrin Paul** — [GitHub](https://github.com/ArrinPaul)
+Issues and pull requests are welcome. The first useful contribution is restoring `backend/app/models/`. Please never commit key files, `.env` files or virtual environments.
 
 ## License
 
-MIT
+Released under the MIT License. See [LICENSE](LICENSE).

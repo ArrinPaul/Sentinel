@@ -48,7 +48,7 @@ keys/
 *.pem
 
 # ML Models
-models/
+/models/
 *.h5
 *.pkl
 
